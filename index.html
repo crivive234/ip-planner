@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NetPlan Pro · Auto IP Planner</title>
+
+  <!-- Fuentes: Syne (UI) + JetBrains Mono (código) -->
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- Estilos principales -->
+  <link rel="stylesheet" href="assets/css/main.css">
+</head>
+<body>
+
+<header class="top">
+  <button class="menu-btn" onclick="toggleMobileMenu()" title="Menú">☰</button>
+  <div class="top-logo">Net<span>Plan</span></div>
+  <div class="top-tag">AUTO IP PLANNER</div>
+  <div class="top-tag">WAN NETWORKS</div>
+  <div class="top-tag v6-badge" id="ds-topbadge" style="display:none">⚡ DUAL-STACK</div>
+  <div class="top-right">
+    <div class="thinking" id="thinking">
+      <div class="thinking-dots"><span></span><span></span><span></span></div>
+      <span id="thinking-msg">Calculando…</span>
+    </div>
+  </div>
+</header>
+<div class="progress-bar"><div class="progress-fill" id="prog" style="width:16.6%"></div></div>
+<div class="sidebar-overlay" id="sidebar-overlay" onclick="closeMobileMenu()"></div>
+
+<div class="shell">
+
+  <!-- SIDEBAR -->
+  <nav class="sidebar" id="sidebar">
+    <div class="side-title">Plan de Red</div>
+    <div class="steps" id="steps-list"></div>
+    <div class="side-status" id="side-status">
+      <div class="ss-title">Estado del Plan</div>
+      <div class="ss-row"><span class="ss-k">Red Base</span><span class="ss-v" id="ss-net">—</span></div>
+      <div class="ss-row"><span class="ss-k">VLANs</span><span class="ss-v" id="ss-vlans">0</span></div>
+      <div class="ss-row"><span class="ss-k">Hosts</span><span class="ss-v" id="ss-hosts">0</span></div>
+      <div class="ss-row"><span class="ss-k">Eficiencia</span><span class="ss-v" id="ss-eff">—</span></div>
+      <div class="ss-row"><span class="ss-k">Servidor DHCP</span><span class="ss-v" id="ss-dhcp" style="color:var(--amber2)">—</span></div>
+      <div class="ss-row"><span class="ss-k">IPv6</span><span class="ss-v" id="ss-v6" style="color:var(--text3)">Desactivado</span></div>
+      <div class="ss-bar"><div class="ss-bar-fill" id="ss-bar" style="width:0%"></div></div>
+    </div>
+  </nav>
+
+  <!-- CONTENT -->
+  <main class="content" id="content">
+
+    <!-- ═══ PASO 1: INFRAESTRUCTURA ═══ -->
+    <div class="page active" id="page-1">
+      <div class="ph"><div class="ph-step">PASO 1 — INFRAESTRUCTURA</div>
+        <div class="ph-title">Define el Edificio y la Organización</div>
+        <div class="ph-sub">Con estos datos el sistema planificará toda la red automáticamente</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Tipo de Organización</div>
+        <div class="org-grid" id="org-grid"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Dimensiones del Edificio</div>
+        <div class="g3">
+          <div class="fg"><label>Número de Pisos</label><input type="number" id="b-floors" value="5" min="1" max="50" oninput="onBuildChange()"></div>
+          <div class="fg"><label>Piso del Core / CPD</label><input type="number" id="b-core" value="1" min="1" max="50" oninput="onBuildChange()"></div>
+          <div class="fg"><label>Hosts por Piso (promedio)</label><input type="number" id="b-hpf" value="150" min="1" oninput="onBuildChange()"></div>
+        </div>
+        <div class="g2">
+          <div class="fg"><label>Puertos por Switch de Acceso</label><input type="number" id="b-ports" value="48" min="8" max="96" oninput="onBuildChange()"></div>
+          <div class="fg"><label>Total Hosts Calculado</label><input type="number" id="b-total" readonly></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Modelo de Redundancia</div>
+        <div class="redund-grid" id="redund-grid"></div>
+        <div class="alert blue" id="redund-explain">
+          <div class="alert-icon">ℹ️</div>
+          <div class="alert-body" id="redund-explain-text">Selecciona un modelo de redundancia para ver su explicación.</div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-lime" onclick="go(2)">Analizar Red Automáticamente →</button>
+      </div>
+    </div>
+
+    <!-- ═══ PASO 2: ANÁLISIS ═══ -->
+    <div class="page" id="page-2">
+      <div class="ph"><div class="ph-step">PASO 2 — ANÁLISIS DE RED</div>
+        <div class="ph-title">Motor de Análisis Automático</div>
+        <div class="ph-sub">El sistema evalúa 7 criterios y elige el segmento y prefijo óptimos</div>
+      </div>
+      <div class="analysis-engine">
+        <div class="ae-header">
+          <div class="ae-logo">🧠</div>
+          <div><div class="ae-title">Análisis en curso…</div><div class="ae-sub">Evaluando infraestructura y seleccionando red</div></div>
+        </div>
+        <div class="ae-steps" id="ae-steps"></div>
+      </div>
+      <div id="net-result-box"></div>
+      <div class="alert lime" style="cursor:pointer" onclick="toggleManual()">
+        <div class="alert-icon">✏️</div>
+        <div class="alert-body">¿Deseas <strong>especificar manualmente</strong> la red? Haz clic aquí para sobreescribir la sugerencia automática.</div>
+      </div>
+      <div id="manual-net-box" style="display:none">
+        <div class="card">
+          <div class="card-title">Especificar Manualmente</div>
+          <div class="g3">
+            <div class="fg"><label>IP de Red</label><input type="text" id="manual-ip" placeholder="192.168.0.0" oninput="onManual()"></div>
+            <div class="fg"><label>Prefijo CIDR</label>
+              <select id="manual-pfx" onchange="onManual()">
+                <option value="16">/16 — 65,534</option><option value="17">/17 — 32,766</option>
+                <option value="18">/18 — 16,382</option><option value="19">/19 — 8,190</option>
+                <option value="20">/20 — 4,094</option><option value="21">/21 — 2,046</option>
+                <option value="22">/22 — 1,022</option><option value="23">/23 — 510</option>
+                <option value="24">/24 — 254</option>
+              </select>
+            </div>
+            <div class="fg"><label>Resultado</label><input type="text" id="manual-result" readonly></div>
+          </div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-ghost" onclick="go(1)">← Atrás</button>
+        <button class="btn btn-lime" onclick="go(3)">Siguiente: Servicios →</button>
+      </div>
+    </div>
+
+    <!-- ═══ PASO 3: SERVICIOS ═══ -->
+    <div class="page" id="page-3">
+      <div class="ph"><div class="ph-step">PASO 3 — SERVICIOS DE RED</div>
+        <div class="ph-title">DNS, NTP, Dominio y DHCP</div>
+        <div class="ph-sub">Configura los servicios globales. El servidor DHCP centralizado manejará todos los pools.</div>
+      </div>
+
+      <!-- DHCP Server Central -->
+      <div class="card">
+        <div class="card-title">🗄️ Servidor DHCP Central (Único)</div>
+        <div class="alert blue" style="margin-bottom:12px">
+          <div class="alert-icon">🔁</div>
+          <div class="alert-body"><strong>Arquitectura de un solo servidor DHCP</strong> con todos los pools. Cada SVI del Core Switch usará <code style="color:var(--amber2)">ip helper-address</code> apuntando a este servidor. Los pools se generan en un único bloque de configuración.</div>
+        </div>
+        <div class="g2">
+          <div class="fg">
+            <label>IP del Servidor DHCP</label>
+            <input type="text" id="svc-dhcp" value="auto" placeholder="auto ó IP fija" oninput="updatePreview()">
+            <div class="hint">💡 "auto" = GW de la VLAN de Gestión + 1. O escribe una IP fija (ej: 10.0.0.50)</div>
+          </div>
+          <div class="fg">
+            <label>IP del Servidor DNS Interno (opcional)</label>
+            <input type="text" id="svc-dnsint" value="" placeholder="ej: 10.0.0.53 (dejar vacío si no hay)">
+            <div class="hint">Si no tienes DNS interno, deja vacío y se usarán los DNS externos.</div>
+          </div>
+        </div>
+        <div class="alert amber">
+          <div class="alert-icon">📌</div>
+          <div class="alert-body"><strong>IPs reservadas por subred:</strong> Solo se reserva la <strong>.1 (Gateway/SVI)</strong>. El pool DHCP empieza desde la <strong>.2</strong>, maximizando el espacio disponible.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Dominio Interno</div>
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <div class="toggle-label">Dominio corporativo definido</div>
+            <div class="toggle-desc">¿Tienes un nombre de dominio interno? (ej: corp.local)</div>
+          </div>
+          <label class="toggle"><input type="checkbox" id="tog-domain" checked onchange="toggleSvc('domain')"><div class="toggle-slider"></div></label>
+        </div>
+        <div class="toggle-sub-config show" id="cfg-domain">
+          <div class="g2">
+            <div class="fg"><label>Dominio Interno</label><input type="text" id="svc-domain" value="corp.local" oninput="updatePreview()"></div>
+            <div class="fg"><label>Sufijo de Búsqueda</label><input type="text" id="svc-search" value="corp.local"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">DNS Global (Internet)</div>
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <div class="toggle-label">Servidores DNS Externos</div>
+            <div class="toggle-desc">DNS para resolución de nombres de Internet</div>
+          </div>
+          <label class="toggle"><input type="checkbox" id="tog-dns" checked onchange="toggleSvc('dns')"><div class="toggle-slider"></div></label>
+        </div>
+        <div class="toggle-sub-config show" id="cfg-dns">
+          <div class="g2">
+            <div class="fg"><label>DNS Primario</label><input type="text" id="svc-dns1" value="8.8.8.8" oninput="updatePreview()"></div>
+            <div class="fg"><label>DNS Secundario</label><input type="text" id="svc-dns2" value="8.8.4.4" oninput="updatePreview()"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">NTP — Sincronización de Tiempo</div>
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <div class="toggle-label">Servidor NTP disponible</div>
+            <div class="toggle-desc">¿Tienes un servidor NTP o usarás uno público?</div>
+          </div>
+          <label class="toggle"><input type="checkbox" id="tog-ntp" onchange="toggleSvc('ntp')"><div class="toggle-slider"></div></label>
+        </div>
+        <div class="toggle-sub-config" id="cfg-ntp">
+          <div class="g2">
+            <div class="fg"><label>Servidor NTP</label><input type="text" id="svc-ntp" value="pool.ntp.org"></div>
+            <div class="fg"><label>NTP Secundario</label><input type="text" id="svc-ntp2" value="time.cloudflare.com"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- IPv6 Dual-Stack Card -->
+      <div class="ds-card">
+        <div class="ds-header">
+          <div class="ds-icon">🌐</div>
+          <div>
+            <div class="ds-title">IPv6 Dual-Stack</div>
+            <div class="ds-sub">Habilita IPv6 junto a IPv4 en todas las VLANs</div>
+          </div>
+          <label class="toggle" style="margin-left:auto"><input type="checkbox" id="tog-v6" onchange="toggleIPv6()"><div class="toggle-slider"></div></label>
+        </div>
+
+        <div id="cfg-v6" style="display:none">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">Modo de Asignación IPv6</div>
+          <div class="mode-grid" id="v6-mode-grid">
+            <div class="mode-card selected" id="mc-slaac" onclick="selectV6Mode('slaac')">
+              <div class="mc-icon">📡</div><div class="mc-name">SLAAC</div>
+              <div class="mc-desc">Router Advertisement. El host genera su propia IP. Sin servidor DHCPv6.</div>
+            </div>
+            <div class="mode-card" id="mc-dhcpv6" onclick="selectV6Mode('dhcpv6')">
+              <div class="mc-icon">🗄️</div><div class="mc-name">DHCPv6</div>
+              <div class="mc-desc">Servidor DHCPv6 asigna IPs y opciones (DNS, dominio).</div>
+            </div>
+            <div class="mode-card" id="mc-both" onclick="selectV6Mode('both')">
+              <div class="mc-icon">⚡</div><div class="mc-name">SLAAC + DHCPv6</div>
+              <div class="mc-desc">RA para prefijo, DHCPv6 para opciones adicionales (Stateless).</div>
+            </div>
+          </div>
+
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">Tipo de Prefijo IPv6</div>
+          <div class="pfx-type-grid">
+            <div class="pfx-type-btn selected" id="pfx-ula" onclick="selectV6PfxType('ula')">🔒 ULA Auto (fd::/8)<br><span style="font-size:8px;opacity:.7">Generado desde IPv4</span></div>
+            <div class="pfx-type-btn" id="pfx-gua" onclick="selectV6PfxType('gua')">🌍 GUA / Personalizado<br><span style="font-size:8px;opacity:.7">Ingresa tu prefijo /48</span></div>
+          </div>
+
+          <div id="cfg-v6-custom" style="display:none;margin-bottom:10px">
+            <div class="fg">
+              <label>Prefijo IPv6 /48 (GUA o ULA personalizado)</label>
+              <input type="text" id="svc-v6pfx" placeholder="ej: 2001:db8:acad:: ó fd10:20:30::" oninput="updatePreview()">
+              <div class="hint">Ingresa el bloque /48 base. Cada VLAN obtendrá un /64 automáticamente.</div>
+            </div>
+          </div>
+
+          <div id="v6-preview-box" style="background:var(--bg3);border:1px solid rgba(34,211,238,.2);border-radius:8px;padding:12px;font-family:var(--mono);font-size:10px;line-height:1.8"></div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-ghost" onclick="go(2)">← Atrás</button>
+        <button class="btn btn-lime" onclick="go(4)">Siguiente: VLANs →</button>
+      </div>
+    </div><!-- /page-3 -->
+
+    <!-- ═══ PASO 4: VLANs ═══ -->
+    <div class="page" id="page-4">
+      <div class="ph">
+        <div class="ph-step">PASO 4 — PLAN DE VLANs</div>
+        <div class="ph-title">Asignación IPv4 + IPv6 por VLAN</div>
+        <div class="ph-sub">VLSM automático · Dual-Stack cuando está habilitado</div>
+      </div>
+
+      <!-- ── Barra de Progreso ── -->
+      <div id="vlan-calc-progress" style="display:none;margin-bottom:20px">
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:20px">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+            <div style="width:36px;height:36px;background:linear-gradient(135deg,rgba(163,230,53,.15),rgba(56,189,248,.1));border:1px solid rgba(163,230,53,.3);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">⚙️</div>
+            <div>
+              <div style="font-weight:800;font-size:14px;color:var(--text)" id="calc-title">Calculando subredes…</div>
+              <div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:2px" id="calc-sub">Iniciando motor VLSM</div>
+            </div>
+          </div>
+          <div style="height:7px;background:rgba(255,255,255,.05);border-radius:4px;margin-bottom:14px;overflow:hidden">
+            <div id="calc-bar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--lime),var(--blue));border-radius:4px;transition:width .35s cubic-bezier(.4,0,.2,1)"></div>
+          </div>
+          <div id="calc-stages" style="display:flex;flex-direction:column;gap:6px"></div>
+        </div>
+      </div>
+
+      <!-- ── Contenido calculado ── -->
+      <div id="vlan-content" style="display:none">
+        <div class="alert green" id="vlan-auto-msg" style="margin-bottom:10px">
+          <div class="alert-icon">✅</div>
+          <div class="alert-body" id="vlan-auto-text"></div>
+        </div>
+        <div id="vlan-ds-summary" style="display:none;margin-bottom:10px"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;flex-wrap:wrap">
+          <span id="vlan-count-lbl" style="font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:2px;text-transform:uppercase"></span>
+          <button class="btn btn-ghost btn-sm" onclick="runVlanCalc(true)">🔄 Regenerar desde perfil</button>
+        </div>
+        <div id="vlan-grid"></div>
+        <button class="btn btn-add" onclick="addVlan()" style="margin-top:6px">＋ Agregar VLAN Personalizada</button>
+      </div>
+
+      <div class="actions" style="margin-top:14px">
+        <button class="btn btn-ghost" onclick="go(3)">← Atrás</button>
+        <button class="btn btn-lime" id="btn-to-5" onclick="go(5)">Siguiente: Políticas →</button>
+      </div>
+    </div>
+
+    <!-- ═══ PASO 5: POLÍTICAS ═══ -->
+    <div class="page" id="page-5">
+      <div class="ph"><div class="ph-step">PASO 5 — POLÍTICAS DE COMUNICACIÓN</div>
+        <div class="ph-title">Matriz de Comunicación Inter-VLAN</div>
+        <div class="ph-sub">Generada automáticamente según el perfil de seguridad de cada VLAN</div>
+      </div>
+      <div class="alert green" id="policy-auto-msg">
+        <div class="alert-icon">🔒</div>
+        <div class="alert-body" id="policy-auto-text">Aplicando políticas automáticas…</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-ghost" onclick="setAllComm(true)">✅ Permitir Todo</button>
+        <button class="btn btn-sm btn-ghost" onclick="setAllComm(false)">🚫 Bloquear Todo</button>
+        <button class="btn btn-sm btn-ghost" onclick="setDefaultComm()">🔄 Restaurar Automático</button>
+      </div>
+      <div class="policy-layout">
+        <div>
+          <div class="policy-matrix-wrap"><table class="pm" id="comm-table"></table></div>
+        </div>
+        <div>
+          <div class="policy-legend">
+            <div class="pl-title">Reglas Aplicadas</div>
+            <div class="pl-row"><div class="pl-dot" style="background:#4ade80"></div>Comunicación permitida</div>
+            <div class="pl-row"><div class="pl-dot" style="background:#f87171"></div>Bloqueado (seguridad)</div>
+            <div style="margin-top:10px;font-size:9px;color:var(--text3);line-height:1.6">Las ACLs se generan automáticamente en las configuraciones de cada vendor.</div>
+            <div class="policy-rules" id="policy-rules"></div>
+          </div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-ghost" onclick="go(4)">← Atrás</button>
+        <button class="btn btn-lime" onclick="go(6)">Siguiente: Resumen →</button>
+      </div>
+    </div>
+
+    <!-- ═══ PASO 6: RESUMEN ═══ -->
+    <div class="page" id="page-6">
+      <div class="ph"><div class="ph-step">PASO 6 — RESUMEN EJECUTIVO</div>
+        <div class="ph-title">Plan de Red Completo</div>
+        <div class="ph-sub">Revisa todos los detalles antes de generar las configuraciones</div>
+      </div>
+      <div id="summary-body"></div>
+      <div class="actions">
+        <button class="btn btn-ghost" onclick="go(5)">← Atrás</button>
+        <button class="btn btn-lime" onclick="go(7)">Generar Configuraciones →</button>
+      </div>
+    </div>
+
+    <!-- ═══ PASO 7: EXPORTAR ═══ -->
+    <div class="page" id="page-7">
+      <div class="ph"><div class="ph-step">PASO 7 — EXPORTAR</div>
+        <div class="ph-title">Configuraciones, Automatización y Plan JSON</div>
+        <div class="ph-sub">Configs por vendor · Script Nornir+NAPALM · Exportar JSON para backend</div>
+      </div>
+
+      <!-- ── Info banners ── -->
+      <div class="alert blue" style="margin-bottom:8px">
+        <div class="alert-icon">🤖</div>
+        <div class="alert-body">La pestaña <strong>🐍 Nornir+NAPALM</strong> genera un script Python listo para producción usando SSH. Selecciona el driver NAPALM según tu vendor antes de copiar. La pestaña <strong>📦 JSON</strong> exporta el plan completo estructurado para conectar con el backend de automatización.</div>
+      </div>
+
+      <!-- ── Nornir+NAPALM config section (visible solo en pestaña nornir) ── -->
+      <div class="py-cfg-card" id="py-cfg-section" style="display:none">
+        <div class="py-cfg-title">🐍 Nornir + NAPALM — Configuración del Script</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px">Driver NAPALM (según vendor de tus dispositivos)</div>
+        <div class="vendor-grid" id="vendor-grid"></div>
+        <div id="py-lib-note" class="alert blue" style="margin-top:12px;margin-bottom:0"></div>
+        <div class="alert amber" style="margin-top:8px;margin-bottom:0">
+          <div class="alert-icon">⚙️</div>
+          <div class="alert-body">El script usa <strong>dry_run=True</strong> por defecto — solo muestra el diff de cambios sin aplicarlos. Para desplegar usa: <code>python deploy_network.py --deploy</code></div>
+        </div>
+      </div>
+
+      <!-- ── JSON export section (visible solo en pestaña json) ── -->
+      <div class="py-cfg-card" id="json-cfg-section" style="display:none;background:var(--green3);border-color:#bbf7d0">
+        <div class="py-cfg-title" style="color:var(--green2);border-bottom-color:#bbf7d0">📦 Exportar Plan JSON — Estructura para Backend Nornir+NAPALM</div>
+        <div class="alert green" style="margin-bottom:12px">
+          <div class="alert-icon">🔗</div>
+          <div class="alert-body">Este JSON es el <strong>contrato entre el frontend y el backend</strong>. El script Nornir+NAPALM lo consume directamente. Contiene inventario de dispositivos, plan VLSM completo, políticas y configuración IPv6.</div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn btn-lime" onclick="downloadJSON()" style="gap:8px">⬇️ Descargar JSON</button>
+          <button class="btn btn-ghost" onclick="copyJSON()">📋 Copiar JSON</button>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text3);align-self:center" id="json-size-lbl"></div>
+        </div>
+      </div>
+
+      <!-- ── TABS ── -->
+      <div class="vtabs">
+        <div class="vtab cisco active" onclick="setVendor('cisco')">🔵 Cisco IOS/XE</div>
+        <div class="vtab huawei" onclick="setVendor('huawei')">🔴 Huawei VRP</div>
+        <div class="vtab fortinet" onclick="setVendor('fortinet')">🟠 FortiOS</div>
+        <div class="vtab nornir" onclick="setVendor('nornir')">🐍 Nornir+NAPALM</div>
+        <div class="vtab jsonexp" onclick="setVendor('jsonexp')">📦 JSON</div>
+      </div>
+
+      <div class="vpanel active" id="vp-cisco"></div>
+      <div class="vpanel" id="vp-huawei"></div>
+      <div class="vpanel" id="vp-fortinet"></div>
+      <div class="vpanel" id="vp-nornir"></div>
+      <div class="vpanel" id="vp-jsonexp">
+        <div class="cfg-block">
+          <div class="cfg-hdr">
+            <span class="cfg-hdr-label">📦 Plan de Red Completo — JSON Estructurado</span>
+            <span class="cfg-hdr-dev">netplan_export.json · Backend Nornir+NAPALM</span>
+            <button class="btn-copy" onclick="copyBlock('json-preview',this)">📋 Copiar</button>
+          </div>
+          <div class="code-area" id="json-preview" style="max-height:500px"></div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-ghost" onclick="go(6)">← Atrás</button>
+        <button class="btn btn-lime" onclick="downloadJSON()" id="btn-dl-json" style="display:none">⬇️ Descargar JSON</button>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- RIGHT PANEL -->
+  <aside class="rpanel">
+    <div class="rp-head"><div class="live-dot"></div>Vista Previa</div>
+    <div class="rp-body" id="rp-body">
+      <div class="rp-section">
+        <div class="rp-title">Estado</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text3);line-height:1.8">Completa los pasos para ver el análisis aquí.</div>
+      </div>
+    </div>
+  </aside>
+
+</div>
+<div id="toast"></div>
+
+<!-- ═══════════════════════════════════════════════════════
+     SCRIPTS — orden de carga importa (dependencias primero)
+     ═══════════════════════════════════════════════════════ -->
+
+<!-- 1. Núcleo: Matemática IP y estado global -->
+<script src="assets/js/core/ipv4.js"></script>
+<script src="assets/js/core/ipv6.js"></script>
+<script src="assets/js/core/state.js"></script>
+
+<!-- 2. Datos: Constantes y configuraciones estáticas -->
+<script src="assets/js/data/constants.js"></script>
+
+<!-- 3. Configuración: Generadores de comandos por vendor -->
+<script src="assets/js/configs/helpers.js"></script>
+<script src="assets/js/configs/cisco.js"></script>
+<script src="assets/js/configs/huawei.js"></script>
+<script src="assets/js/configs/fortinet.js"></script>
+<script src="assets/js/configs/nornir.js"></script>
+
+<!-- 4. UI: Componentes de interfaz -->
+<script src="assets/js/ui/toast.js"></script>
+<script src="assets/js/ui/preview.js"></script>
+<script src="assets/js/ui/render.js"></script>
+
+<!-- 5. Módulos funcionales del wizard -->
+<script src="assets/js/modules/wizard.js"></script>
+<script src="assets/js/modules/analysis.js"></script>
+<script src="assets/js/modules/services.js"></script>
+<script src="assets/js/modules/vlans.js"></script>
+<script src="assets/js/modules/policy.js"></script>
+<script src="assets/js/modules/summary.js"></script>
+<script src="assets/js/modules/export.js"></script>
+
+<!-- 6. Punto de entrada: inicialización -->
+<script src="assets/js/main.js"></script>
+
+</body>
+</html>
