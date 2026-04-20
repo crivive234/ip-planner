@@ -1,0 +1,866 @@
+/*
+ * ╔══════════════════════════════════════════════════════════════╗
+ * ║  NetPlan Pro v4.0 — styles.css                              ║
+ * ║                                                              ║
+ * ║  Secciones:                                                  ║
+ * ║    1.  Variables CSS y reset                                 ║
+ * ║    2.  Layout principal                                      ║
+ * ║    3.  Panel izquierdo — wizard                              ║
+ * ║    4.  Componentes de formulario                             ║
+ * ║    5.  Componentes de feedback                               ║
+ * ║    6.  Paso 2 — análisis IPv4                                ║
+ * ║    7.  Paso 3 — servicios (switch IPv6)                      ║
+ * ║    8.  Paso 4 — tarjetas VLAN + gestión                      ║
+ * ║    9.  Paso 5 — tabla VLSM                                   ║
+ * ║   10.  Paso 6 — exportar                                     ║
+ * ║   11.  Panel derecho — estado                                ║
+ * ║   12.  Score de eficiencia                                   ║
+ * ║   13.  Modal de finalización                                 ║
+ * ║   14.  Responsive                                            ║
+ * ╚══════════════════════════════════════════════════════════════╝
+ */
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   1. VARIABLES CSS Y RESET
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+:root {
+  /* Fondos */
+  --bg-page:    #f0f4f8;
+  --bg-panel:   #ffffff;
+  --bg-surface: #f7f9fb;
+  --bg-hover:   #eef2f7;
+
+  /* Acentos */
+  --accent:       #1a6fc4;
+  --accent-light: #e8f0fb;
+  --accent-mid:   #4a90d9;
+
+  /* Estados */
+  --ok:           #1a7a4a;
+  --ok-bg:        #e8f5ee;
+  --ok-border:    #a8d5b8;
+
+  --warn:         #875a00;
+  --warn-bg:      #fff8e6;
+  --warn-border:  #f0cc70;
+
+  --error:        #b91c1c;
+  --error-bg:     #fef2f2;
+  --error-border: #fca5a5;
+
+  /* Tipografía */
+  --text-primary:   #1a2332;
+  --text-secondary: #4a5568;
+  --text-muted:     #718096;
+  --text-disabled:  #a0aec0;
+
+  /* Bordes */
+  --border:        #d1dae6;
+  --border-strong: #b0bdd0;
+  --border-focus:  #1a6fc4;
+
+  /* Fuentes */
+  --font-ui:   'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono: 'DM Mono', 'Courier New', monospace;
+
+  /* Radios */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  /* Espaciado */
+  --gap:    16px;
+  --gap-lg: 24px;
+
+  /* Sombras */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  --shadow-md: 0 4px 12px rgba(0,0,0,.08), 0 2px 4px rgba(0,0,0,.04);
+  --shadow-lg: 0 10px 30px rgba(0,0,0,.12), 0 4px 8px rgba(0,0,0,.06);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+
+body {
+  font-family:      var(--font-ui);
+  font-size:        14px;
+  line-height:      1.6;
+  color:            var(--text-primary);
+  background-color: var(--bg-page);
+  min-height:       100vh;
+}
+
+.mono       { font-family: var(--font-mono); }
+.mono.small { font-size: 11px; }
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   2. LAYOUT PRINCIPAL
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.app-header {
+  background:    var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  padding:       14px var(--gap-lg);
+  display:       flex;
+  align-items:   center;
+  gap:           var(--gap);
+  flex-wrap:     wrap;
+  box-shadow:    var(--shadow-sm);
+}
+
+.header-brand    { display: flex; align-items: center; gap: 10px; }
+
+.brand-logo {
+  font-family:    var(--font-mono);
+  font-size:      18px;
+  font-weight:    500;
+  letter-spacing: 0.1em;
+  color:          var(--text-secondary);
+}
+.brand-logo span { color: var(--accent); }
+
+.brand-badge {
+  font-family:    var(--font-mono);
+  font-size:      11px;
+  padding:        2px 9px;
+  border-radius:  20px;
+  background:     var(--accent-light);
+  color:          var(--accent);
+  border:         1px solid #c2d7f0;
+}
+
+.header-subtitle { font-size: 12px; color: var(--text-muted); margin-left: auto; }
+
+/* Barra de pasos */
+.steps-nav {
+  display:         flex;
+  overflow-x:      auto;
+  background:      var(--bg-panel);
+  border-bottom:   1px solid var(--border);
+  box-shadow:      var(--shadow-sm);
+  scrollbar-width: none;
+}
+.steps-nav::-webkit-scrollbar { display: none; }
+
+.step-tab {
+  flex:           0 0 auto;
+  display:        flex;
+  flex-direction: column;
+  align-items:    center;
+  gap:            2px;
+  padding:        12px 22px;
+  background:     transparent;
+  border:         none;
+  border-bottom:  3px solid transparent;
+  color:          var(--text-muted);
+  cursor:         pointer;
+  transition:     all 0.2s;
+  white-space:    nowrap;
+  font-family:    var(--font-ui);
+}
+.step-tab:hover         { color: var(--text-secondary); background: var(--bg-hover); }
+.step-tab.active        { color: var(--accent); border-color: var(--accent); background: var(--accent-light); }
+.step-tab.done          { color: var(--ok); border-color: var(--ok-border); }
+.step-num               { font-family: var(--font-mono); font-size: 10px; opacity: .7; }
+.step-label             { font-size: 12px; font-weight: 500; }
+
+/* Layout 2 columnas */
+.app-layout {
+  display:               grid;
+  grid-template-columns: 1fr 270px;
+  gap:                   var(--gap);
+  max-width:             1100px;
+  margin:                0 auto;
+  padding:               var(--gap);
+  align-items:           start;
+}
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   3. PANEL IZQUIERDO — WIZARD
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.main-panel {
+  background:    var(--bg-panel);
+  border:        1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding:       var(--gap-lg);
+  box-shadow:    var(--shadow-sm);
+  min-height:    520px;
+}
+
+.step-content        { display: none; }
+.step-content.active { display: block; }
+
+.step-header       { margin-bottom: var(--gap-lg); }
+.step-title        { font-size: 20px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+.step-desc         { font-size: 13px; color: var(--text-muted); }
+
+.step-nav {
+  display:         flex;
+  justify-content: space-between;
+  margin-top:      var(--gap-lg);
+  padding-top:     var(--gap);
+  border-top:      1px solid var(--border);
+}
+
+.btn-nav {
+  padding:     9px 22px;
+  border-radius: var(--radius-md);
+  font-size:   13px;
+  font-weight: 500;
+  cursor:      pointer;
+  transition:  all 0.2s;
+  font-family: var(--font-ui);
+}
+.btn-back {
+  background: var(--bg-surface);
+  border:     1px solid var(--border);
+  color:      var(--text-secondary);
+}
+.btn-back:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-strong); }
+
+.btn-next {
+  background: var(--accent);
+  border:     1px solid var(--accent);
+  color:      #fff;
+}
+.btn-next:hover:not(:disabled) { background: var(--accent-mid); }
+
+.btn-nav:disabled {
+  background:   var(--bg-surface);
+  border-color: var(--border);
+  color:        var(--text-disabled);
+  cursor:       not-allowed;
+}
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   4. COMPONENTES DE FORMULARIO
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.field-group    { margin-bottom: var(--gap-lg); }
+
+.group-label {
+  display:        block;
+  font-size:      11px;
+  font-weight:    600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color:          var(--text-muted);
+  margin-bottom:  10px;
+}
+
+.optional-tag {
+  font-size:      10px;
+  padding:        1px 7px;
+  border-radius:  20px;
+  background:     var(--bg-surface);
+  color:          var(--text-muted);
+  border:         1px solid var(--border);
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left:    6px;
+  vertical-align: middle;
+}
+
+.grid-2 {
+  display:               grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap:                   var(--gap);
+}
+
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field label { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+
+.field input,
+.field select {
+  padding:       9px 12px;
+  background:    var(--bg-surface);
+  border:        1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color:         var(--text-primary);
+  font-size:     14px;
+  font-family:   var(--font-ui);
+  transition:    border-color 0.2s, box-shadow 0.2s;
+  width:         100%;
+}
+.field input:focus,
+.field select:focus {
+  outline:      none;
+  border-color: var(--border-focus);
+  box-shadow:   0 0 0 3px rgba(26,111,196,.12);
+  background:   #fff;
+}
+
+/* Quitar flechas numéricas nativas */
+.field input[type="number"]::-webkit-inner-spin-button,
+.field input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; }
+.field input[type="number"] { -moz-appearance: textfield; }
+
+/* Select: flecha personalizada */
+.field select {
+  appearance:         none;
+  -webkit-appearance: none;
+  background-image:   url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23718096' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:  no-repeat;
+  background-position: right 12px center;
+  padding-right:      36px;
+  cursor:             pointer;
+}
+.field select:disabled { opacity: .5; cursor: not-allowed; }
+
+.field-hint  { font-size: 12px; color: var(--text-muted); }
+.field-error { font-size: 12px; color: var(--error); display: none; }
+
+.field.invalid input,
+.field.invalid select {
+  border-color: var(--error-border);
+  background:   var(--error-bg);
+  box-shadow:   0 0 0 3px rgba(185,28,28,.08);
+}
+.field.invalid .field-error { display: block; }
+.field.invalid .field-hint  { display: none; }
+
+/* Toggle group */
+.toggle-group { display: flex; gap: 8px; }
+
+.toggle-btn {
+  flex:          1;
+  padding:       9px 14px;
+  background:    var(--bg-surface);
+  border:        1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color:         var(--text-secondary);
+  font-size:     13px;
+  font-weight:   500;
+  font-family:   var(--font-ui);
+  cursor:        pointer;
+  transition:    all 0.2s;
+  text-align:    center;
+}
+.toggle-btn:hover  { border-color: var(--border-strong); color: var(--text-primary); background: var(--bg-hover); }
+.toggle-btn.active { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
+
+/* Vendor buttons */
+.vendor-group { display: flex; gap: var(--gap); }
+
+.vendor-btn {
+  flex:           1;
+  display:        flex;
+  flex-direction: column;
+  align-items:    center;
+  gap:            4px;
+  padding:        14px 8px;
+  background:     var(--bg-surface);
+  border:         1px solid var(--border);
+  border-radius:  var(--radius-md);
+  cursor:         pointer;
+  transition:     all 0.2s;
+  font-family:    var(--font-ui);
+  box-shadow:     var(--shadow-sm);
+}
+.vendor-btn:hover  { border-color: var(--border-strong); background: var(--bg-hover); box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.vendor-btn.active { background: var(--accent-light); border-color: var(--accent); box-shadow: 0 0 0 2px rgba(26,111,196,.15); }
+.vendor-name       { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.vendor-sub        { font-size: 11px; color: var(--text-muted); text-align: center; }
+.vendor-btn.active .vendor-name { color: var(--accent); }
+.vendor-btn.active .vendor-sub  { color: var(--accent-mid); }
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   5. COMPONENTES DE FEEDBACK
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.divider { border: none; border-top: 1px solid var(--border); margin: var(--gap-lg) 0; }
+
+/* Info-box de switches: .ok (verde) / .warn (ámbar) */
+.info-box {
+  display:       flex;
+  align-items:   flex-start;
+  gap:           10px;
+  padding:       12px 14px;
+  border-radius: var(--radius-md);
+  border:        1px solid;
+  margin-top:    var(--gap);
+}
+.info-box.ok   { background: var(--ok-bg);   border-color: var(--ok-border); }
+.info-box.warn { background: var(--warn-bg); border-color: var(--warn-border); }
+.info-icon     { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+.info-box.ok   .info-icon { color: var(--ok); }
+.info-box.warn .info-icon { color: var(--warn); }
+.info-body     { display: flex; flex-direction: column; gap: 2px; }
+.info-body strong { font-size: 13px; font-weight: 600; }
+.info-box.ok   .info-body strong { color: var(--ok); }
+.info-box.warn .info-body strong { color: var(--warn); }
+.info-body span { font-size: 12px; color: var(--text-secondary); }
+
+/* Check-list del análisis */
+.check-list { list-style: none; display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--gap-lg); }
+.check-item { font-size: 13px; color: var(--text-muted); padding-left: 22px; position: relative; }
+.check-item::before {
+  content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 9px; height: 9px; border-radius: 50%; background: var(--border-strong); transition: background 0.2s;
+}
+.check-item.ok              { color: var(--text-secondary); }
+.check-item.ok::before      { background: var(--ok); }
+
+/* Toast */
+.toast {
+  position:      fixed;
+  bottom:        24px;
+  right:         24px;
+  padding:       10px 18px;
+  border-radius: var(--radius-md);
+  font-size:     13px;
+  font-weight:   500;
+  z-index:       1000;
+  box-shadow:    var(--shadow-md);
+  transition:    opacity 0.3s, transform 0.3s;
+}
+.toast.success { background: var(--ok-bg);    border: 1px solid var(--ok-border);    color: var(--ok); }
+.toast.error   { background: var(--error-bg); border: 1px solid var(--error-border); color: var(--error); }
+.toast.hidden  { opacity: 0; transform: translateY(8px); pointer-events: none; }
+
+.placeholder-msg { text-align: center; color: var(--text-muted); font-size: 13px; padding: 48px 0; font-style: italic; }
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   6. PASO 2 — ANÁLISIS IPv4
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.analysis-result {
+  background:    var(--bg-surface);
+  border:        1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding:       var(--gap);
+  margin-bottom: var(--gap-lg);
+}
+
+.result-main {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-bottom: var(--gap); padding-bottom: var(--gap); border-bottom: 1px solid var(--border);
+}
+
+.result-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+
+.result-network {
+  font-size: 24px; font-weight: 500; color: var(--accent);
+  letter-spacing: 0.03em; line-height: 1.2;
+}
+
+.result-sub { font-size: 12px; color: var(--text-muted); }
+
+.result-metrics { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--gap); }
+
+.metric-card {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 12px 14px; background: var(--bg-panel);
+  border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-sm);
+}
+.metric-card.accent { border-color: #c2d7f0; background: var(--accent-light); }
+.metric-val         { font-size: 22px; font-weight: 600; color: var(--text-primary); line-height: 1.2; }
+.metric-card.accent .metric-val { color: var(--accent); }
+.metric-lbl         { font-size: 11px; color: var(--text-muted); }
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   7. PASO 3 — SERVICIOS: SWITCH IPv6
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.toggle-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--gap); padding: 10px 0;
+}
+.toggle-row-text    { display: flex; flex-direction: column; gap: 3px; }
+.toggle-row-label   { font-size: 14px; font-weight: 500; color: var(--text-primary); }
+.toggle-row-sub     { font-size: 12px; color: var(--text-muted); }
+
+.switch             { position: relative; width: 42px; height: 24px; flex-shrink: 0; }
+.switch input       { opacity: 0; width: 0; height: 0; position: absolute; }
+.switch-slider      {
+  position: absolute; inset: 0; background: var(--border-strong);
+  border-radius: 24px; cursor: pointer; transition: 0.2s;
+}
+.switch-slider::before {
+  content: ''; position: absolute; width: 18px; height: 18px;
+  background: #fff; border-radius: 50%; top: 3px; left: 3px;
+  transition: 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,.2);
+}
+.switch input:checked + .switch-slider             { background: var(--accent); }
+.switch input:checked + .switch-slider::before     { transform: translateX(18px); }
+
+.ipv6-info {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 12px 14px; background: var(--accent-light);
+  border: 1px solid #c2d7f0; border-radius: var(--radius-md);
+  margin-top: 10px; font-size: 12px; color: var(--text-secondary);
+}
+.ipv6-info .mono { font-size: 14px; color: var(--accent); }
+.ipv6-info.hidden { display: none; }
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   8. PASO 4 — TARJETAS VLAN + GESTIÓN
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/* ── Formulario inline de agregar / editar VLAN ─────────────── */
+.vlan-form {
+  background:    var(--bg-surface);
+  border:        1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding:       var(--gap);
+  margin-bottom: var(--gap);
+}
+.vlan-form.hidden { display: none; }
+
+.vlan-form-title {
+  font-size:     14px;
+  font-weight:   600;
+  color:         var(--accent);
+  margin-bottom: var(--gap);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.vlan-form-footer {
+  display:         flex;
+  justify-content: flex-end;
+  gap:             10px;
+  margin-top:      var(--gap);
+  padding-top:     var(--gap);
+  border-top:      1px solid var(--border);
+}
+
+/* ── Barra de herramientas de VLANs ─────────────────────────── */
+.vlans-toolbar {
+  display:         flex;
+  align-items:     center;
+  justify-content: space-between;
+  margin-bottom:   12px;
+}
+
+.vlans-count {
+  font-size:   12px;
+  color:       var(--text-muted);
+  font-weight: 500;
+}
+
+.btn-add-vlan {
+  padding:       7px 16px;
+  background:    var(--accent);
+  border:        1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color:         #fff;
+  font-size:     13px;
+  font-weight:   500;
+  font-family:   var(--font-ui);
+  cursor:        pointer;
+  transition:    all 0.2s;
+}
+.btn-add-vlan:hover { background: var(--accent-mid); }
+
+/* ── Contenedor de tarjetas ──────────────────────────────────── */
+.vlans-container { display: flex; flex-direction: column; gap: 10px; }
+
+/* Tarjeta individual de VLAN */
+.vlan-card {
+  background:    var(--bg-panel);
+  border:        1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding:       14px 16px;
+  box-shadow:    var(--shadow-sm);
+  transition:    box-shadow 0.2s, border-color 0.2s;
+}
+.vlan-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-md); }
+
+/* Borde izquierdo de color según tipo */
+.vlan-card.type-users   { border-left: 3px solid var(--accent); }
+.vlan-card.type-admin   { border-left: 3px solid var(--ok); }
+.vlan-card.type-servers { border-left: 3px solid #7c3aed; }
+.vlan-card.type-voip    { border-left: 3px solid #0891b2; }
+.vlan-card.type-mgmt    { border-left: 3px solid var(--warn); }
+.vlan-card.type-custom  { border-left: 3px solid var(--text-muted); }
+
+/* Encabezado: nombre + acciones */
+.vlan-card-header {
+  display:         flex;
+  align-items:     center;
+  justify-content: space-between;
+  margin-bottom:   8px;
+}
+.vlan-card-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+
+/* Grupo de acciones: badge + botones editar/eliminar */
+.vlan-card-actions { display: flex; align-items: center; gap: 8px; }
+
+/* Badges de piso */
+.vlan-badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 500; border: 1px solid; }
+.vlan-badge.blue  { background: var(--accent-light); color: var(--accent); border-color: #c2d7f0; }
+.vlan-badge.green { background: var(--ok-bg); color: var(--ok); border-color: var(--ok-border); }
+.vlan-badge.amber { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-border); }
+
+/* Botones de icono (editar / eliminar) */
+.btn-icon {
+  width:         28px;
+  height:        28px;
+  display:       flex;
+  align-items:   center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  border:        1px solid var(--border);
+  background:    var(--bg-surface);
+  cursor:        pointer;
+  font-size:     13px;
+  transition:    all 0.2s;
+  line-height:   1;
+  font-family:   var(--font-ui);
+}
+.btn-icon.btn-edit   { color: var(--accent); }
+.btn-icon.btn-delete { color: var(--error); }
+.btn-icon:hover      { background: var(--bg-hover); border-color: var(--border-strong); }
+.btn-icon.btn-edit:hover   { background: var(--accent-light); border-color: var(--accent); }
+.btn-icon.btn-delete:hover { background: var(--error-bg); border-color: var(--error-border); }
+
+/* Detalle de IP en la tarjeta */
+.vlan-card-detail { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); line-height: 1.8; }
+.vlan-card-detail .v4 { color: var(--text-secondary); }
+.vlan-card-detail .v6 { color: var(--accent-mid); }
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   9. PASO 5 — TABLA VLSM
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.summary-metrics {
+  display: grid;
+  /* 2 columnas en desktop (panel lateral ocupa ~270px, dejar espacio) */
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--gap);
+  margin-bottom: var(--gap-lg);
+}
+
+.table-wrap { overflow-x: auto; }
+
+.vlsm-table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
+
+.vlsm-table th {
+  text-align: left; padding: 9px 12px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted);
+  background: var(--bg-surface); border-bottom: 2px solid var(--border);
+}
+.vlsm-table td {
+  padding: 9px 12px; border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono); color: var(--text-secondary);
+}
+.vlsm-table td.td-name { font-family: var(--font-ui); font-weight: 600; color: var(--text-primary); }
+.vlsm-table tbody tr:last-child td { border-bottom: none; }
+.vlsm-table tbody tr:hover td { background: var(--bg-hover); }
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   10. PASO 6 — EXPORTAR
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.export-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: var(--gap); }
+
+.export-tab {
+  padding: 8px 16px; background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 13px;
+  font-weight: 500; font-family: var(--font-ui); cursor: pointer; transition: all 0.2s;
+}
+.export-tab:hover  { border-color: var(--border-strong); color: var(--text-primary); background: var(--bg-hover); }
+.export-tab.active { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
+
+.code-wrapper  { position: relative; margin-bottom: var(--gap); }
+
+.copy-btn {
+  position: absolute; top: 10px; right: 10px;
+  padding: 5px 14px; background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 12px;
+  font-weight: 500; font-family: var(--font-ui); cursor: pointer; transition: all 0.2s;
+  z-index: 1; box-shadow: var(--shadow-sm);
+}
+.copy-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+
+.code-block {
+  background: #f8fafc; border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 16px; padding-top: 44px; overflow-x: auto; max-height: 420px; overflow-y: auto;
+}
+.code-block code {
+  font-family: var(--font-mono); font-size: 13px; color: #334155;
+  line-height: 1.75; white-space: pre; display: block;
+}
+
+/* Clases de sintaxis aplicadas desde JS */
+.ck { color: #1a6fc4; }   /* keyword */
+.cv { color: #1a7a4a; }   /* value   */
+.cc { color: #94a3b8; }   /* comment */
+.cs { color: #875a00; }   /* string  */
+
+.download-row { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.btn-download {
+  padding: 9px 18px; background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 13px;
+  font-weight: 500; font-family: var(--font-ui); cursor: pointer; transition: all 0.2s;
+  box-shadow: var(--shadow-sm);
+}
+.btn-download:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); box-shadow: var(--shadow-md); }
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   11. PANEL DERECHO — ESTADO DEL PLAN
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.side-panel {
+  display:        flex;
+  flex-direction: column;
+  gap:            var(--gap);
+  position:       sticky;
+  top:            var(--gap);
+  min-width:      0;       /* evita overflow en grid */
+  overflow:       hidden;
+}
+
+.side-card {
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: var(--gap); box-shadow: var(--shadow-sm);
+}
+
+.side-title {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-muted);
+  margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+}
+
+.side-rows { display: flex; flex-direction: column; }
+
+.side-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; gap: 8px;
+}
+.side-row:last-child { border-bottom: none; }
+.side-row span:first-child { color: var(--text-muted); flex-shrink: 0; }
+.side-row span:last-child  {
+  font-weight:  500;
+  color:        var(--text-primary);
+  text-align:   right;
+  word-break:   break-all;
+  overflow-wrap: anywhere;
+  min-width:    0;
+}
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   12. SCORE DE EFICIENCIA
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.score-card   { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: var(--gap); }
+
+.score-circle {
+  width: 76px; height: 76px; border-radius: 50%; border: 2px solid #c2d7f0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-light); box-shadow: 0 0 0 4px rgba(26,111,196,.08);
+}
+.score-num  { font-family: var(--font-mono); font-size: 22px; font-weight: 500; color: var(--accent); }
+.score-lbl  { font-size: 12px; color: var(--text-muted); text-align: center; }
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   13. MODAL DE FINALIZACIÓN
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(15,23,42,.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 500; padding: var(--gap); backdrop-filter: blur(2px);
+}
+.modal-overlay.hidden { display: none; }
+
+.modal {
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: var(--gap-lg);
+  max-width: 420px; width: 100%; box-shadow: var(--shadow-lg); text-align: center;
+}
+
+.modal-icon {
+  font-size: 36px; color: var(--ok); margin-bottom: 12px;
+  background: var(--ok-bg); width: 64px; height: 64px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 2px solid var(--ok-border);
+}
+.modal-title   { font-size: 18px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
+.modal-desc    { font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: var(--gap-lg); }
+.modal-actions { display: flex; gap: var(--gap); }
+
+.btn-modal-secondary {
+  flex: 1; padding: 10px; background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius-md); color: var(--text-secondary); font-size: 13px;
+  font-weight: 500; font-family: var(--font-ui); cursor: pointer; transition: all 0.2s;
+}
+.btn-modal-secondary:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+
+.btn-modal-primary {
+  flex: 1; padding: 10px; background: var(--accent); border: 1px solid var(--accent);
+  border-radius: var(--radius-md); color: #fff; font-size: 13px;
+  font-weight: 500; font-family: var(--font-ui); cursor: pointer; transition: all 0.2s;
+}
+.btn-modal-primary:hover { background: var(--accent-mid); }
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   14. RESPONSIVE
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+@media (max-width: 900px) {
+  .app-layout      { grid-template-columns: 1fr; }
+  .side-panel      { position: static; flex-direction: row; flex-wrap: wrap; overflow: visible; }
+  .side-card       { flex: 1 1 calc(50% - var(--gap)); min-width: 200px; }
+  .summary-metrics { grid-template-columns: repeat(2, 1fr); }
+  .result-metrics  { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 600px) {
+  .app-header            { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .header-subtitle       { margin-left: 0; }
+  .main-panel            { padding: var(--gap); }
+  .grid-2                { grid-template-columns: 1fr; }
+  .vendor-group          { flex-direction: column; }
+  .result-metrics        { grid-template-columns: 1fr; }
+  .summary-metrics       { grid-template-columns: repeat(2, 1fr); }
+  .side-card             { flex: 1 1 100%; }
+  .modal-actions         { flex-direction: column; }
+  .export-tab            { font-size: 12px; padding: 7px 12px; }
+  .download-row          { flex-direction: column; }
+  .btn-download          { width: 100%; text-align: center; }
+  .vlan-form-footer      { flex-direction: column; }
+}
+
+/* Contenedor de topología SVG en el paso 6 */
+.topo-wrapper {
+  background:    #f8fafc;
+  border:        1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding:       16px;
+  margin-bottom: var(--gap);
+  overflow-x:    auto;          /* scroll horizontal si el SVG es ancho */
+  text-align:    center;
+}
+
+.topo-wrapper.hidden { display: none; }
+
+/* El SVG generado ocupa todo el ancho disponible sin desbordar */
+#topo-container svg {
+  max-width:  100%;
+  height:     auto;
+  display:    block;
+  margin:     0 auto;
+}
+
