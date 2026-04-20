@@ -190,6 +190,8 @@ body {
   padding:       var(--gap-lg);
   box-shadow:    var(--shadow-sm);
   min-height:    520px;
+  min-width:     0;      /* evita overflow horizontal en grid */
+  overflow:      hidden;
 }
 
 .step-content        { display: none; }
@@ -644,9 +646,14 @@ body {
   grid-template-columns: repeat(2, 1fr);
   gap: var(--gap);
   margin-bottom: var(--gap-lg);
+  min-width: 0;
 }
 
-.table-wrap { overflow-x: auto; }
+.table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
 
 .vlsm-table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
 
@@ -678,7 +685,13 @@ body {
 .export-tab:hover  { border-color: var(--border-strong); color: var(--text-primary); background: var(--bg-hover); }
 .export-tab.active { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
 
-.code-wrapper  { position: relative; margin-bottom: var(--gap); }
+/* Contenedor compartido que alterna entre código y topología */
+.export-view-wrapper {
+  position: relative;
+  margin-bottom: var(--gap);
+}
+
+.code-wrapper  { position: relative; margin-bottom: 0; }
 
 .copy-btn {
   position: absolute; top: 10px; right: 10px;
@@ -819,48 +832,115 @@ body {
    14. RESPONSIVE
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 
+/* ── Tablet grande / desktop pequeño (≤ 1100px) ─────────────── */
+@media (max-width: 1100px) {
+  .app-layout {
+    max-width: 100%;
+    padding:   var(--gap);
+  }
+}
+
+/* ── Tablet (≤ 900px): colapsa a 1 columna ──────────────────── */
 @media (max-width: 900px) {
-  .app-layout      { grid-template-columns: 1fr; }
-  .side-panel      { position: static; flex-direction: row; flex-wrap: wrap; overflow: visible; }
-  .side-card       { flex: 1 1 calc(50% - var(--gap)); min-width: 200px; }
+  .app-layout {
+    grid-template-columns: 1fr;
+  }
+
+  /* El panel lateral pasa a horizontal al bajar */
+  .side-panel {
+    position:       static;
+    flex-direction: row;
+    flex-wrap:      wrap;
+    overflow:       visible;
+    order:          2;          /* queda debajo del wizard */
+  }
+  .side-card { flex: 1 1 calc(50% - var(--gap)); min-width: 200px; }
+
   .summary-metrics { grid-template-columns: repeat(2, 1fr); }
   .result-metrics  { grid-template-columns: 1fr 1fr; }
+
+  /* Tabla VLSM: asegurar scroll lateral sin overflow */
+  .table-wrap { width: 100%; overflow-x: auto; }
+  .vlsm-table { min-width: 700px; }
 }
 
+/* ── Móvil grande (≤ 680px) ─────────────────────────────────── */
+@media (max-width: 680px) {
+  .app-layout { padding: 10px; gap: 10px; }
+
+  .main-panel { padding: var(--gap); border-radius: var(--radius-md); }
+
+  .step-title { font-size: 17px; }
+
+  .summary-metrics { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .metric-val      { font-size: 18px; }
+
+  /* Tabla: scroll horizontal con indicador visual */
+  .table-wrap { border-radius: var(--radius-md); }
+  .vlsm-table { min-width: 620px; font-size: 11px; }
+  .vlsm-table th, .vlsm-table td { padding: 7px 9px; }
+
+  .export-tabs { gap: 4px; }
+  .export-tab  { font-size: 12px; padding: 7px 10px; }
+
+  .side-card { flex: 1 1 100%; }
+}
+
+/* ── Móvil pequeño (≤ 600px) ────────────────────────────────── */
 @media (max-width: 600px) {
-  .app-header            { flex-direction: column; align-items: flex-start; gap: 6px; }
-  .header-subtitle       { margin-left: 0; }
-  .main-panel            { padding: var(--gap); }
-  .grid-2                { grid-template-columns: 1fr; }
-  .vendor-group          { flex-direction: column; }
-  .result-metrics        { grid-template-columns: 1fr; }
-  .summary-metrics       { grid-template-columns: repeat(2, 1fr); }
-  .side-card             { flex: 1 1 100%; }
-  .modal-actions         { flex-direction: column; }
-  .export-tab            { font-size: 12px; padding: 7px 12px; }
-  .download-row          { flex-direction: column; }
-  .btn-download          { width: 100%; text-align: center; }
-  .vlan-form-footer      { flex-direction: column; }
+  .app-header      { flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px var(--gap); }
+  .header-subtitle { margin-left: 0; font-size: 11px; }
+
+  .step-tab        { padding: 10px 14px; }
+
+  .main-panel      { padding: var(--gap); }
+
+  .grid-2          { grid-template-columns: 1fr; }
+  .vendor-group    { flex-direction: column; }
+
+  .result-metrics  { grid-template-columns: 1fr; }
+  .summary-metrics { grid-template-columns: 1fr 1fr; }
+
+  .side-card       { flex: 1 1 100%; }
+
+  .modal-actions   { flex-direction: column; }
+
+  .export-tab      { font-size: 11px; padding: 6px 10px; }
+
+  .download-row    { flex-direction: column; }
+  .btn-download    { width: 100%; text-align: center; }
+
+  .vlan-form-footer { flex-direction: column; }
+
+  .toast { bottom: 12px; right: 12px; left: 12px; text-align: center; font-size: 12px; }
+
+  .summary-download-row { justify-content: stretch; }
+  .btn-download-summary { width: 100%; text-align: center; }
 }
 
-/* Contenedor de topología SVG en el paso 6 */
-.topo-wrapper {
-  background:    #f8fafc;
-  border:        1px solid var(--border);
+/* Botón de descarga del resumen */
+.summary-download-row {
+  display:         flex;
+  justify-content: flex-end;
+  margin-top:      var(--gap);
+}
+
+.btn-download-summary {
+  padding:       9px 20px;
+  background:    var(--accent);
+  border:        1px solid var(--accent);
   border-radius: var(--radius-md);
-  padding:       16px;
-  margin-bottom: var(--gap);
-  overflow-x:    auto;          /* scroll horizontal si el SVG es ancho */
-  text-align:    center;
+  color:         #fff;
+  font-size:     13px;
+  font-weight:   500;
+  font-family:   var(--font-ui);
+  cursor:        pointer;
+  transition:    all 0.2s;
+  box-shadow:    var(--shadow-sm);
 }
-
-.topo-wrapper.hidden { display: none; }
-
-/* El SVG generado ocupa todo el ancho disponible sin desbordar */
-#topo-container svg {
-  max-width:  100%;
-  height:     auto;
-  display:    block;
-  margin:     0 auto;
+.btn-download-summary:hover {
+  background:    var(--accent-mid);
+  border-color:  var(--accent-mid);
+  box-shadow:    var(--shadow-md);
 }
 

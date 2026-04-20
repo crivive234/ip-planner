@@ -1220,29 +1220,10 @@ function selectExportTab(btn) {
 
 /**
  * Genera y muestra el contenido del tab activo en el paso 6.
- * Tabs de texto (cisco/huawei/fortinet): muestra .code-wrapper
- * Tab de topología: oculta el bloque de código y renderiza el SVG
- * en .topo-wrapper para que se vea como imagen, no como texto.
  */
 function renderExportCode() {
-  const codeWrapper = document.getElementById('code-wrapper');
-  const topoWrapper = document.getElementById('topo-wrapper');
-  const codeEl      = document.getElementById('export-code');
-  const topoEl      = document.getElementById('topo-container');
+  const codeEl = document.getElementById('export-code');
 
-  const isTopology  = S.export_vendor === 'topology';
-
-  /* Alternar visibilidad según el tab */
-  if (codeWrapper) codeWrapper.classList.toggle('hidden', isTopology);
-  if (topoWrapper) topoWrapper.classList.toggle('hidden', !isTopology);
-
-  if (isTopology) {
-    /* Renderizar el SVG directamente como HTML para que sea visible */
-    if (topoEl) topoEl.innerHTML = generateTopologySVG();
-    return;
-  }
-
-  /* Tabs de texto: mostrar configuración en el bloque de código */
   let code = '';
   switch (S.export_vendor) {
     case 'cisco':    code = generateCiscoConfig();    break;
@@ -1272,236 +1253,115 @@ function downloadText(content, filename) {
   showToast(`Descargando ${filename}`, 'success');
 }
 
-function downloadCisco()  { downloadText(generateCiscoConfig(),  `netplan_cisco_${S.domain}.txt`); }
+function downloadCisco()    { downloadText(generateCiscoConfig(),    `netplan_cisco_${S.domain}.txt`); }
 function downloadHuawei()   { downloadText(generateHuaweiConfig(),   `netplan_huawei_${S.domain}.txt`); }
 function downloadFortinet() { downloadText(generateFortinetConfig(), `netplan_fortinet_${S.domain}.txt`); }
-function downloadTopology() {
-  /* Descargar como SVG (image/svg+xml para que lo abra el navegador como imagen) */
-  const svg  = generateTopologySVG();
-  const blob = new Blob([svg], { type: 'image/svg+xml' });
+
+/**
+ * Genera y descarga el Resumen del plan como archivo HTML imprimible.
+ * Incluye métricas globales y la tabla VLSM completa con estilos inline.
+ */
+function downloadSummary() {
+  if (!S.vlans.length) { showToast('Completa el plan antes de descargar el resumen', 'error'); return; }
+
+  const totalHostsReq = S.vlans.reduce((sum, v) => sum + v.hosts_required, 0);
+  const totalUseful   = S.vlans.reduce((sum, v) => sum + v.hosts_useful,   0);
+  const globalEff     = Math.round((totalHostsReq / totalUseful) * 100);
+  const swPerFloor    = Math.ceil(S.hosts_piso / S.puertos);
+  const now           = new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  const rows = S.vlans.map(v => `
+    <tr>
+      <td>${v.id}</td>
+      <td><strong>${v.name}</strong></td>
+      <td>${v.floor_label}</td>
+      <td>${v.network}/${v.prefix}</td>
+      <td>${v.mask}</td>
+      <td>${v.gateway_v4}</td>
+      <td>${v.broadcast}</td>
+      <td>${v.hosts_useful}</td>
+      <td>${v.efficiency}%</td>
+      <td>${S.ipv6 && v.subnet_v6 ? v.subnet_v6 : '—'}</td>
+      <td>${S.ipv6 && v.gateway_v6 ? v.gateway_v6 : '—'}</td>
+    </tr>`).join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Resumen NetPlan Pro — ${S.domain}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #1a2332; background: #fff; padding: 32px; }
+    header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #1a6fc4; padding-bottom: 12px; margin-bottom: 24px; }
+    .brand { font-size: 22px; font-weight: 700; letter-spacing: .08em; color: #1a2332; }
+    .brand span { color: #1a6fc4; }
+    .meta { font-size: 11px; color: #718096; text-align: right; line-height: 1.8; }
+    h2 { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #4a5568; margin-bottom: 14px; }
+    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 28px; }
+    .mc { background: #f0f4f8; border: 1px solid #d1dae6; border-radius: 8px; padding: 14px 16px; }
+    .mc .val { font-size: 26px; font-weight: 700; color: #1a6fc4; line-height: 1.1; }
+    .mc .lbl { font-size: 11px; color: #718096; margin-top: 3px; }
+    table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+    thead tr { background: #f0f4f8; }
+    th { text-align: left; padding: 8px 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #718096; border-bottom: 2px solid #d1dae6; white-space: nowrap; }
+    td { padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-family: 'Courier New', monospace; color: #4a5568; white-space: nowrap; }
+    td strong { font-family: 'Segoe UI', Arial, sans-serif; font-weight: 600; color: #1a2332; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f7f9fb; }
+    footer { margin-top: 24px; font-size: 11px; color: #a0aec0; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 12px; }
+    @media print {
+      body { padding: 16px; }
+      .metrics { grid-template-columns: repeat(4, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">NET<span>PLAN</span> <small style="font-size:13px;font-weight:400;color:#718096;">Pro v4.0</small></div>
+    <div class="meta">
+      Dominio: <strong>${S.domain}</strong><br>
+      Red base: <strong>${S.net ? S.net.address + '/' + S.net.prefix : '—'}</strong><br>
+      Generado: ${now}
+    </div>
+  </header>
+
+  <h2>Métricas globales</h2>
+  <div class="metrics">
+    <div class="mc"><div class="val">${globalEff}%</div><div class="lbl">Eficiencia IPv4</div></div>
+    <div class="mc"><div class="val">${S.vlans.length}</div><div class="lbl">VLANs generadas</div></div>
+    <div class="mc"><div class="val">${(S.hosts_piso * S.pisos).toLocaleString()}</div><div class="lbl">Hosts totales</div></div>
+    <div class="mc"><div class="val">${swPerFloor}</div><div class="lbl">Switches / piso</div></div>
+  </div>
+
+  <h2>Tabla VLSM — Direccionamiento IPv4${S.ipv6 ? ' e IPv6' : ''}</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>VLAN</th><th>Nombre</th><th>Piso</th><th>Red IPv4</th>
+        <th>Máscara</th><th>Gateway IPv4</th><th>Broadcast</th>
+        <th>Hosts útiles</th><th>Efic.</th>
+        <th>Subred IPv6 /64</th><th>Gateway IPv6</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+
+  <footer>NetPlan Pro v4.0 · Fundación Universitaria Compensar · Documento generado automáticamente</footer>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const a    = document.createElement('a');
   a.href     = URL.createObjectURL(blob);
-  a.download = `netplan_topologia_${S.domain}.svg`;
+  a.download = `netplan_resumen_${S.domain}.html`;
   a.click();
   URL.revokeObjectURL(a.href);
-  showToast('Topología SVG descargada', 'success');
+  showToast('Resumen descargado correctamente', 'success');
 }
 
 
 
-/* ══════════════════════════════════════════════════════════════
-   14b. GENERADOR DE TOPOLOGÍA SVG
-   Dibuja el diagrama jerárquico de la red planificada:
-     Internet → Firewall → Core Switch L3 → Switches de acceso
-     → VLANs con sus subredes IPv4 (e IPv6 si está activo)
-   El SVG se renderiza en el bloque de código del paso 6
-   y también se puede descargar como archivo .svg.
-   ══════════════════════════════════════════════════════════════ */
-function generateTopologySVG() {
-  /* ── Constantes de layout ─────────────────────────────── */
-  const W        = 900;           // ancho total del SVG
-  const NODE_W   = 160;           // ancho de cada nodo
-  const NODE_H   = 48;            // alto de nodo estándar
-  const VLAN_H   = S.ipv6 ? 62 : 50; // alto de tarjeta VLAN (más alto con IPv6)
-  const VLAN_W   = 170;           // ancho de tarjeta VLAN
-  const GAP_V    = 60;            // separación vertical entre filas
-
-  /* Colores usando valores fijos (SVG no hereda variables CSS) */
-  const C = {
-    bg:        '#f0f4f8',   // fondo del SVG
-    panel:     '#ffffff',   // relleno de nodos
-    border:    '#d1dae6',   // borde de nodos
-    accent:    '#1a6fc4',   // azul principal
-    accentLt:  '#e8f0fb',   // azul claro
-    ok:        '#1a7a4a',   // verde
-    okLt:      '#e8f5ee',
-    warn:      '#875a00',   // ámbar
-    warnLt:    '#fff8e6',
-    purple:    '#7c3aed',
-    purpleLt:  '#ede9fe',
-    teal:      '#0891b2',
-    tealLt:    '#e0f2fe',
-    muted:     '#718096',   // texto secundario
-    text:      '#1a2332',   // texto principal
-    line:      '#b0bdd0',   // líneas de conexión
-  };
-
-  /* Mapa de colores por tipo de VLAN */
-  const VLAN_COLORS = {
-    users:   { fill: C.accentLt,  stroke: C.accent,  text: C.accent  },
-    admin:   { fill: C.okLt,      stroke: C.ok,       text: C.ok      },
-    servers: { fill: C.purpleLt,  stroke: C.purple,   text: C.purple  },
-    voip:    { fill: C.tealLt,    stroke: C.teal,     text: C.teal    },
-    mgmt:    { fill: C.warnLt,    stroke: C.warn,     text: C.warn    },
-    custom:  { fill: '#f1eff8',   stroke: C.muted,    text: C.muted   },
-  };
-
-  /* ── Cálculo de posiciones ────────────────────────────── */
-  // Fila 0: Internet (Y = 20)
-  // Fila 1: Firewall (Y = 20 + NODE_H + GAP_V)
-  // Fila 2: Core Switch L3 (Y = fila1 + NODE_H + GAP_V)
-  // Fila 3: Switches de acceso — uno por piso (Y = fila2 + ...)
-  // Fila 4: Tarjetas VLAN distribuidas debajo de cada access switch
-
-  const ROW0_Y = 24;
-  const ROW1_Y = ROW0_Y + NODE_H + GAP_V;
-  const ROW2_Y = ROW1_Y + NODE_H + GAP_V;
-  const ROW3_Y = ROW2_Y + NODE_H + GAP_V;
-
-  /* Posición X centrada para un elemento */
-  const cx = (x, w) => x + w / 2;
-
-  /* Cuántos switches de acceso hay */
-  const swCount    = S.pisos;
-  const swSpacing  = Math.min(200, (W - 60) / swCount);
-  const swStartX   = (W - swSpacing * (swCount - 1) - NODE_W) / 2;
-
-  /* Altura de la fila de VLANs — depende del número de VLANs y columnas */
-  const VLAN_COLS   = Math.min(S.vlans.length, 3);  // máx 3 columnas
-  const VLAN_ROWS_N = Math.ceil(S.vlans.length / VLAN_COLS);
-  const ROW4_Y      = ROW3_Y + NODE_H + GAP_V;
-  const TOTAL_H     = ROW4_Y + VLAN_ROWS_N * (VLAN_H + 10) + 40;
-
-  /* ── Helpers SVG ──────────────────────────────────────── */
-  const rect = (x, y, w, h, fill, stroke, r = 8) =>
-    `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="${fill}" stroke="${stroke}" stroke-width="1.2"/>`;
-
-  const text = (x, y, txt, size, color, weight = '400', anchor = 'middle') =>
-    `<text x="${x}" y="${y}" font-size="${size}" fill="${color}" font-weight="${weight}" text-anchor="${anchor}" font-family="'DM Mono',monospace">${escSVG(txt)}</text>`;
-
-  const uiText = (x, y, txt, size, color, weight = '500', anchor = 'middle') =>
-    `<text x="${x}" y="${y}" font-size="${size}" fill="${color}" font-weight="${weight}" text-anchor="${anchor}" font-family="'Plus Jakarta Sans',sans-serif">${escSVG(txt)}</text>`;
-
-  const line = (x1, y1, x2, y2, color = C.line, dash = '') =>
-    `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="1.5" ${dash ? `stroke-dasharray="${dash}"` : ''}/>`;
-
-  /* Nodo de equipo genérico (rectángulo con título y subtítulo) */
-  function node(x, y, w, h, title, subtitle, fill, stroke) {
-    const mid = cx(x, w);
-    return [
-      rect(x, y, w, h, fill, stroke),
-      uiText(mid, y + h * 0.42, title, 12, stroke, '600'),
-      uiText(mid, y + h * 0.72, subtitle, 10, C.muted, '400'),
-    ].join('');
-  }
-
-  function escSVG(s) {
-    return String(s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
-  }
-
-  /* ── Construir SVG ────────────────────────────────────── */
-  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${TOTAL_H}" width="${W}" height="${TOTAL_H}" style="font-family:sans-serif;background:${C.bg};border-radius:12px;">`;
-
-  /* Fondo */
-  svg += `<rect width="${W}" height="${TOTAL_H}" fill="${C.bg}" rx="12"/>`;
-
-  /* ── Título ── */
-  svg += uiText(W / 2, 16, `NetPlan Pro v4.0 — Topología de red: ${S.domain}`, 13, C.text, '600');
-
-  /* ── Nodo Internet ── */
-  const intX = (W - NODE_W) / 2;
-  svg += node(intX, ROW0_Y, NODE_W, NODE_H, 'Internet / WAN', 'Proveedor ISP', '#f0f9ff', C.teal);
-
-  /* ── Nodo Firewall ── */
-  const fwLabel  = S.vendor === 'cisco' ? 'Cisco ASA/Firepower' : S.vendor === 'huawei' ? 'Huawei USG' : 'FortiGate';
-  const fwX      = (W - NODE_W) / 2;
-  const fwFill   = S.vendor === 'fortinet' ? C.warnLt : C.accentLt;
-  const fwStroke = S.vendor === 'fortinet' ? C.warn   : C.accent;
-  svg += node(fwX, ROW1_Y, NODE_W, NODE_H, 'FW-01', fwLabel, fwFill, fwStroke);
-
-  /* Línea Internet → FW */
-  svg += line(cx(intX, NODE_W), ROW0_Y + NODE_H, cx(fwX, NODE_W), ROW1_Y, C.teal);
-
-  /* ── Nodo Core Switch L3 ── */
-  const coreLabel = S.vendor === 'cisco' ? 'Cisco Catalyst' : 'Huawei S-series';
-  const coreX     = (W - NODE_W) / 2;
-  svg += node(coreX, ROW2_Y, NODE_W, NODE_H, 'CORE-SW-01', coreLabel, C.accentLt, C.accent);
-
-  /* Línea FW → Core */
-  const redLabel = S.redundancia === 'dual' ? 'LACP' : 'trunk';
-  svg += line(cx(fwX, NODE_W), ROW1_Y + NODE_H, cx(coreX, NODE_W), ROW2_Y, C.accent);
-  svg += uiText(cx(coreX, NODE_W) + 8, ROW2_Y - 8, redLabel, 9, C.accent, '500', 'start');
-
-  /* ── Nodos Access Switches (uno por piso) ── */
-  const swNodes = [];
-  for (let p = 0; p < swCount; p++) {
-    const swX    = swStartX + p * swSpacing;
-    const isCore = (p + 1) === S.core_piso;
-    const label  = isCore ? `Piso ${p + 1} (CPD)` : `Piso ${p + 1}`;
-    swNodes.push({ x: swX, y: ROW3_Y, floor: p + 1 });
-    svg += node(swX, ROW3_Y, NODE_W, NODE_H,
-      `ACCESS-SW-P${p + 1}`, label,
-      isCore ? C.okLt : C.panel, isCore ? C.ok : C.border);
-
-    /* Línea Core → Access Switch */
-    svg += line(cx(coreX, NODE_W), ROW2_Y + NODE_H,
-                cx(swX, NODE_W),   ROW3_Y, C.line);
-  }
-
-  /* ── Tarjetas VLAN ── */
-  /* Distribuir VLANs horizontalmente centradas debajo de los access switches */
-  const totalVlanW  = VLAN_COLS * VLAN_W + (VLAN_COLS - 1) * 10;
-  const vlanStartX  = (W - totalVlanW) / 2;
-
-  S.vlans.forEach((v, i) => {
-    const col  = i % VLAN_COLS;
-    const row  = Math.floor(i / VLAN_COLS);
-    const vx   = vlanStartX + col * (VLAN_W + 10);
-    const vy   = ROW4_Y + row * (VLAN_H + 10);
-    const col_ = VLAN_COLORS[v.type] || VLAN_COLORS.custom;
-
-    svg += rect(vx, vy, VLAN_W, VLAN_H, col_.fill, col_.stroke, 6);
-
-    /* Borde izquierdo de color */
-    svg += `<rect x="${vx}" y="${vy}" width="4" height="${VLAN_H}" rx="6" fill="${col_.stroke}"/>`;
-
-    /* Texto VLAN */
-    svg += uiText(vx + VLAN_W / 2 + 2, vy + 16, `VLAN ${v.id} — ${v.name}`, 11, col_.text, '600');
-    svg += text(vx + VLAN_W / 2 + 2, vy + 30, `${v.network}/${v.prefix}`, 10, C.text);
-    svg += text(vx + VLAN_W / 2 + 2, vy + 43, `GW: ${v.gateway_v4}`, 10, C.muted);
-    if (S.ipv6 && v.subnet_v6) {
-      const v6short = v.subnet_v6.replace('fdc0:a800:0000:', '…:');
-      svg += text(vx + VLAN_W / 2 + 2, vy + 56, v6short, 9, C.accent);
-    }
-
-    /* Línea desde el access switch del piso más cercano hasta la VLAN */
-    /* Conectar desde el switch del piso que corresponde a la VLAN */
-    let srcSw;
-    if (v.floor === 'core' || v.floor === S.core_piso) {
-      srcSw = swNodes.find(s => s.floor === S.core_piso) || swNodes[0];
-    } else {
-      /* Distribuir: conectar al switch del piso más cercano geográficamente */
-      const swIdx = Math.min(i % swCount, swNodes.length - 1);
-      srcSw = swNodes[swIdx];
-    }
-    if (srcSw) {
-      svg += line(cx(srcSw.x, NODE_W), ROW3_Y + NODE_H,
-                  cx(vx, VLAN_W),      vy, C.line, '4 3');
-    }
-  });
-
-  /* ── Leyenda ── */
-  const legY   = TOTAL_H - 26;
-  const legX   = 16;
-  const legItems = [
-    { color: C.teal,   label: 'WAN/Internet' },
-    { color: C.accent, label: `Core (${S.vendor})` },
-    { color: C.ok,     label: `CPD — Piso ${S.core_piso}` },
-    { color: C.muted,  label: 'Access Switches' },
-  ];
-  legItems.forEach((item, i) => {
-    const lx = legX + i * 140;
-    svg += `<rect x="${lx}" y="${legY}" width="10" height="10" rx="2" fill="${item.color}"/>`;
-    svg += uiText(lx + 14, legY + 9, item.label, 9, C.muted, '400', 'start');
-  });
-
-  svg += '</svg>';
-  return svg;
-}
 
 /* ══════════════════════════════════════════════════════════════
    15. NAVEGACIÓN DEL WIZARD

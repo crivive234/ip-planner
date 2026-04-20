@@ -480,6 +480,10 @@
             </tbody>
           </table>
         </div>
+
+        <div class="summary-download-row">
+          <button class="btn-download-summary" onclick="downloadSummary()">↓ Descargar Resumen (HTML)</button>
+        </div>
       </section><!-- /step-4 -->
 
       <!-- ┌───────────────────────────────────────┐
@@ -500,29 +504,22 @@
                   onclick="selectExportTab(this)" role="tab">Huawei VRP</button>
           <button class="export-tab" data-vendor="fortinet"
                   onclick="selectExportTab(this)" role="tab">FortiGate (FW)</button>
-          <button class="export-tab" data-vendor="topology"
-                  onclick="selectExportTab(this)" role="tab">Topología</button>
         </div>
 
         <!--
-          Dos modos de visualización en el paso 6:
-          · .code-wrapper → configuraciones de texto (Cisco, Huawei, Fortinet)
-          · .topo-wrapper → topología SVG renderizada visualmente
-          JS alterna cuál es visible según el tab activo.
+          Tabs de texto (Cisco, Huawei, Fortinet): muestra .code-wrapper
         -->
-        <div class="code-wrapper" id="code-wrapper">
-          <button class="copy-btn" id="copy-btn" onclick="copyCode()">Copiar</button>
-          <pre class="code-block"><code id="export-code">Selecciona un vendor para ver la configuración generada</code></pre>
-        </div>
-        <div class="topo-wrapper hidden" id="topo-wrapper">
-          <div id="topo-container"><!-- SVG inyectado por JS --></div>
+        <div class="export-view-wrapper">
+          <div class="code-wrapper" id="code-wrapper">
+            <button class="copy-btn" id="copy-btn" onclick="copyCode()">Copiar</button>
+            <pre class="code-block"><code id="export-code">Selecciona un vendor para ver la configuración generada</code></pre>
+          </div>
         </div>
 
         <div class="download-row">
           <button class="btn-download" onclick="downloadCisco()">↓ Cisco IOS/XE</button>
           <button class="btn-download" onclick="downloadHuawei()">↓ Huawei VRP</button>
           <button class="btn-download" onclick="downloadFortinet()">↓ FortiGate (FW)</button>
-          <button class="btn-download" onclick="downloadTopology()">↓ Topología SVG</button>
         </div>
       </section><!-- /step-5 -->
 
