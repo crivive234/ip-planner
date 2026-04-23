@@ -4,20 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NetPlan Pro v4.0</title>
-
   <!--
   ┌─────────────────────────────────────────────────────────────┐
   │  NetPlan Pro v4.0                                           │
   │  Planificación automática de redes WAN/LAN Dual-Stack       │
   │  Fundación Universitaria Compensar                          │
-  │                                                             │
-  │  Archivos:                                                  │
-  │    index.html  ← estructura y semántica                     │
-  │    styles.css  ← variables, layout, componentes             │
-  │    script.js   ← lógica, cálculos, generación de configs    │
   └─────────────────────────────────────────────────────────────┘
   -->
-
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -25,9 +18,7 @@
 </head>
 <body>
 
-  <!-- ╔══════════════════════════════════════════╗
-       ║              APP HEADER                 ║
-       ╚══════════════════════════════════════════╝ -->
+  <!-- HEADER -->
   <header class="app-header">
     <div class="header-brand">
       <span class="brand-logo">NET<span>PLAN</span></span>
@@ -38,75 +29,45 @@
     </p>
   </header>
 
-  <!-- ╔══════════════════════════════════════════╗
-       ║          BARRA DE PASOS (WIZARD)        ║
-       ╚══════════════════════════════════════════╝ -->
+  <!-- WIZARD STEPS NAV -->
   <nav class="steps-nav" role="navigation" aria-label="Pasos del asistente">
     <button class="step-tab active" data-step="0" onclick="goToStep(0)">
-      <span class="step-num">01</span>
-      <span class="step-label">Infraestructura</span>
+      <span class="step-num">01</span><span class="step-label">Infraestructura</span>
     </button>
     <button class="step-tab" data-step="1" onclick="goToStep(1)">
-      <span class="step-num">02</span>
-      <span class="step-label">Análisis IPv4</span>
+      <span class="step-num">02</span><span class="step-label">Análisis IPv4</span>
     </button>
     <button class="step-tab" data-step="2" onclick="goToStep(2)">
-      <span class="step-num">03</span>
-      <span class="step-label">Servicios</span>
+      <span class="step-num">03</span><span class="step-label">Servicios</span>
     </button>
     <button class="step-tab" data-step="3" onclick="goToStep(3)">
-      <span class="step-num">04</span>
-      <span class="step-label">VLANs</span>
+      <span class="step-num">04</span><span class="step-label">VLANs</span>
     </button>
     <button class="step-tab" data-step="4" onclick="goToStep(4)">
-      <span class="step-num">05</span>
-      <span class="step-label">Resumen</span>
+      <span class="step-num">05</span><span class="step-label">Resumen</span>
     </button>
     <button class="step-tab" data-step="5" onclick="goToStep(5)">
-      <span class="step-num">06</span>
-      <span class="step-label">Exportar</span>
+      <span class="step-num">06</span><span class="step-label">Exportar</span>
     </button>
   </nav>
 
-  <!-- ╔══════════════════════════════════════════╗
-       ║    LAYOUT PRINCIPAL: 2 columnas         ║
-       ╚══════════════════════════════════════════╝ -->
+  <!-- MAIN LAYOUT: 2 columns -->
   <main class="app-layout">
-
-    <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-         COLUMNA IZQUIERDA: pasos del wizard
-         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
     <div class="main-panel">
 
-      <!-- ┌───────────────────────────────────────┐
-           │  PASO 1 — INFRAESTRUCTURA             │
-           │                                       │
-           │  Selects con valores fijos:           │
-           │   · pisos: 1–5 (siempre válido)       │
-           │   · core: 1–pisos (siempre válido)    │
-           │   · puertos: 24 | 48                  │
-           │                                       │
-           │  Solo inp-hosts requiere validación.  │
-           │  Bug anterior corregido: pisos y core │
-           │  arrancan con valor válido desde el   │
-           │  inicio gracias a los selects.        │
-           └───────────────────────────────────────┘ -->
+      <!-- ══════════════════════════════════════════
+           PASO 01 — INFRAESTRUCTURA
+           ══════════════════════════════════════════ -->
       <section class="step-content active" id="step-0">
         <div class="step-header">
           <h2 class="step-title">Infraestructura</h2>
           <p class="step-desc">Define el edificio y los parámetros base de la red corporativa</p>
         </div>
 
-        <!-- Dimensiones del edificio -->
+        <!-- Dimensiones -->
         <div class="field-group">
           <span class="group-label">Dimensiones del edificio</span>
           <div class="grid-2">
-
-            <!--
-              SELECT de pisos (1–5).
-              Al cambiar actualiza las opciones de sel-core y resetea vlan_defs.
-              S.pisos siempre tiene un valor válido → elimina el bug de validación.
-            -->
             <div class="field">
               <label for="sel-pisos">Número de pisos</label>
               <select id="sel-pisos" onchange="onPisosChange()">
@@ -118,12 +79,6 @@
               </select>
               <span class="field-hint">Máximo 5 pisos para redes medianas</span>
             </div>
-
-            <!--
-              SELECT de piso del Core (actualizado dinámicamente por onPisosChange).
-              Máximo = número de pisos seleccionado.
-              Siempre válido → no necesita mensaje de error.
-            -->
             <div class="field">
               <label for="sel-core">Piso del Core / CPD</label>
               <select id="sel-core" onchange="onCoreChange()">
@@ -133,30 +88,22 @@
               </select>
               <span class="field-hint">Normalmente planta baja (piso 1)</span>
             </div>
-
           </div>
         </div>
 
-        <!-- Hosts y capacidad de switches -->
+        <!-- Hosts, switches y factor de crecimiento -->
         <div class="field-group">
-          <span class="group-label">Hosts y capacidad de switches de acceso</span>
+          <span class="group-label">Hosts, switches y escalabilidad</span>
           <div class="grid-2">
-
-            <!--
-              Único campo que requiere validación manual en el paso 1.
-              El botón Siguiente se habilita solo cuando este campo es válido.
-            -->
             <div class="field" id="field-hosts">
               <label for="inp-hosts">Hosts por piso (promedio)</label>
-              <input type="number" id="inp-hosts"
-                     min="1" max="500" value=""
+              <input type="number" id="inp-hosts" min="1" max="500" value=""
                      placeholder="Ej: 150"
                      onkeydown="blockInvalidNumKeys(event)"
                      oninput="onHostsChange()" />
               <span class="field-hint">Máximo 500 hosts por piso</span>
               <span class="field-error">Valor fuera de rango (1 – 500)</span>
             </div>
-
             <div class="field">
               <label for="sel-puertos">Puertos de acceso por switch</label>
               <select id="sel-puertos" onchange="onHostsChange()">
@@ -165,10 +112,23 @@
               </select>
               <span class="field-hint">Capacidad estándar del switch de acceso</span>
             </div>
-
           </div>
 
-          <!-- Resultado dinámico: switches por piso — Math.ceil(hosts / puertos) -->
+          <!-- Factor de crecimiento (selector inline) -->
+          <div class="field" style="margin-top:var(--gap)">
+            <label for="sel-growth">Factor de crecimiento</label>
+            <select id="sel-growth" onchange="onGrowthChange()">
+              <option value="1.5">1.5× — Horizonte corto (1–2 años)</option>
+              <option value="2" selected>2× — Horizonte medio (3–5 años) · recomendado</option>
+              <option value="3">3× — Horizonte largo (5–10 años)</option>
+            </select>
+            <span class="field-hint">
+              Multiplica los hosts totales para dimensionar la red base.
+              Determina el tamaño del bloque CIDR y el margen libre.
+            </span>
+          </div>
+
+          <!-- Resultado dinámico de switches -->
           <div class="info-box ok" id="sw-result">
             <span class="info-icon">◈</span>
             <div class="info-body">
@@ -178,7 +138,7 @@
           </div>
         </div>
 
-        <!-- Redundancia de enlaces -->
+        <!-- Redundancia -->
         <div class="field-group">
           <span class="group-label">Redundancia de enlaces</span>
           <div class="toggle-group" id="tg-redund" role="group">
@@ -189,32 +149,29 @@
           </div>
         </div>
 
-        <!-- Vendor principal — solo Cisco y Huawei -->
+        <!-- Vendor -->
         <div class="field-group">
           <span class="group-label">Vendor principal</span>
           <div class="vendor-group" id="tg-vendor" role="group">
-
             <button class="vendor-btn active" data-value="cisco" onclick="selectVendor(this)">
               <span class="vendor-name">Cisco</span>
               <span class="vendor-sub">ISR · Catalyst · ASA/Firepower</span>
             </button>
-
             <button class="vendor-btn" data-value="huawei" onclick="selectVendor(this)">
               <span class="vendor-name">Huawei</span>
               <span class="vendor-sub">AR/NE · S-series · USG</span>
             </button>
-
           </div>
         </div>
       </section><!-- /step-0 -->
 
-      <!-- ┌───────────────────────────────────────┐
-           │  PASO 2 — ANÁLISIS AUTOMÁTICO IPv4    │
-           └───────────────────────────────────────┘ -->
+      <!-- ══════════════════════════════════════════
+           PASO 02 — ANÁLISIS AUTOMÁTICO IPv4
+           ══════════════════════════════════════════ -->
       <section class="step-content" id="step-1">
         <div class="step-header">
           <h2 class="step-title">Análisis automático de red</h2>
-          <p class="step-desc">Selección del bloque IPv4 base · Overhead fijo 2×</p>
+          <p class="step-desc">Selección del bloque IPv4 base · Factor de crecimiento configurable</p>
         </div>
 
         <div class="analysis-result">
@@ -226,7 +183,7 @@
           <div class="result-metrics">
             <div class="metric-card">
               <span class="metric-val" id="res-planned">—</span>
-              <span class="metric-lbl">hosts planificados (2×)</span>
+              <span class="metric-lbl" id="res-planned-lbl">hosts planificados (2×)</span>
             </div>
             <div class="metric-card">
               <span class="metric-val" id="res-margin">—</span>
@@ -262,15 +219,16 @@
         </div>
       </section><!-- /step-1 -->
 
-      <!-- ┌───────────────────────────────────────┐
-           │  PASO 3 — SERVICIOS DE RED            │
-           └───────────────────────────────────────┘ -->
+      <!-- ══════════════════════════════════════════
+           PASO 03 — SERVICIOS DE RED
+           ══════════════════════════════════════════ -->
       <section class="step-content" id="step-2">
         <div class="step-header">
           <h2 class="step-title">Servicios de red</h2>
-          <p class="step-desc">Parámetros mínimos para las configuraciones generadas</p>
+          <p class="step-desc">DNS · NTP · IPv6 · Enrutamiento estático WAN</p>
         </div>
 
+        <!-- DNS -->
         <div class="field-group">
           <span class="group-label">Servidores DNS</span>
           <div class="grid-2">
@@ -291,6 +249,7 @@
           </div>
         </div>
 
+        <!-- NTP y dominio -->
         <div class="field-group">
           <span class="group-label">NTP y dominio interno</span>
           <div class="grid-2">
@@ -313,6 +272,7 @@
 
         <hr class="divider" />
 
+        <!-- IPv6 Dual-Stack -->
         <div class="field-group">
           <span class="group-label">IPv6 Dual-Stack</span>
           <div class="toggle-row">
@@ -330,40 +290,62 @@
             <span>Prefijo ULA /48 derivado de la red base · Cada VLAN recibe un bloque /64</span>
           </div>
         </div>
+
+        <hr class="divider" />
+
+        <!-- ── Enrutamiento estático WAN ── -->
+        <div class="field-group">
+          <span class="group-label">
+            Enrutamiento estático WAN
+            <span class="optional-tag">opcional</span>
+          </span>
+          <div class="info-box ok" style="margin-bottom:var(--gap)">
+            <span class="info-icon">ℹ</span>
+            <div class="info-body">
+              <strong style="font-size:12px">El enrutamiento inter-VLAN es automático</strong>
+              <span>Las VLANs se comunican entre sí via SVIs en el Core Switch (rutas conectadas).
+              Completa esta sección solo si existen sedes remotas o redes WAN adicionales.</span>
+            </div>
+          </div>
+          <div class="grid-2">
+            <div class="field" id="field-wan-nexthop">
+              <label for="inp-wan-nexthop">Next-hop WAN / Firewall externo</label>
+              <input type="text" id="inp-wan-nexthop"
+                     placeholder="Ej: 200.10.5.1"
+                     oninput="onWanChange()" />
+              <span class="field-hint">IPv4 del equipo de borde (ISP o Firewall externo)</span>
+              <span class="field-error">Dirección IPv4 inválida</span>
+            </div>
+            <div class="field" id="field-wan-routes">
+              <label for="inp-wan-routes">Redes remotas (una por línea)</label>
+              <textarea id="inp-wan-routes" rows="4"
+                        placeholder="Ej:&#10;192.168.100.0/24&#10;172.20.0.0/16"
+                        oninput="onWanChange()"
+                        class="textarea-mono"></textarea>
+              <span class="field-hint">CIDR válido por línea — genera rutas estáticas hacia el next-hop</span>
+              <span class="field-error">Una o más redes tienen formato CIDR inválido</span>
+            </div>
+          </div>
+        </div>
       </section><!-- /step-2 -->
 
-      <!-- ┌───────────────────────────────────────┐
-           │  PASO 4 — VLANs                       │
-           │                                       │
-           │  Funciones de gestión:                │
-           │   · Ver las VLANs generadas           │
-           │   · Agregar una nueva VLAN            │
-           │   · Editar nombre, hosts y piso       │
-           │   · Eliminar una VLAN                 │
-           │                                       │
-           │  El formulario es inline (no modal).  │
-           └───────────────────────────────────────┘ -->
+      <!-- ══════════════════════════════════════════
+           PASO 04 — VLANs
+           ══════════════════════════════════════════ -->
       <section class="step-content" id="step-3">
         <div class="step-header">
           <h2 class="step-title">VLANs del plan</h2>
           <p class="step-desc">Revisa, edita, agrega o elimina VLANs según tus necesidades</p>
         </div>
 
-        <!--
-          Formulario inline para agregar / editar VLAN.
-          JS lo muestra/oculta con .hidden.
-          Al editar, el ID se deshabilita (no se puede cambiar).
-        -->
+        <!-- Formulario inline agregar / editar VLAN -->
         <div class="vlan-form hidden" id="vlan-form">
           <div class="vlan-form-title" id="vlan-form-title">Nueva VLAN</div>
-
           <div class="grid-2">
             <div class="field" id="field-vid">
               <label for="inp-vid">ID de VLAN</label>
-              <input type="number" id="inp-vid"
-                     min="1" max="4094" placeholder="Ej: 50"
-                     onkeydown="blockInvalidNumKeys(event)"
-                     oninput="validateVlanForm()" />
+              <input type="number" id="inp-vid" min="1" max="4094" placeholder="Ej: 50"
+                     onkeydown="blockInvalidNumKeys(event)" oninput="validateVlanForm()" />
               <span class="field-hint">Rango: 1 – 4094 (único)</span>
               <span class="field-error">ID inválido o ya existe en el plan</span>
             </div>
@@ -375,14 +357,11 @@
               <span class="field-error">Nombre inválido o vacío</span>
             </div>
           </div>
-
           <div class="grid-2">
             <div class="field" id="field-vhosts">
               <label for="inp-vhosts">Hosts requeridos</label>
-              <input type="number" id="inp-vhosts"
-                     min="2" max="500" placeholder="Ej: 20"
-                     onkeydown="blockInvalidNumKeys(event)"
-                     oninput="validateVlanForm()" />
+              <input type="number" id="inp-vhosts" min="2" max="500" placeholder="Ej: 20"
+                     onkeydown="blockInvalidNumKeys(event)" oninput="validateVlanForm()" />
               <span class="field-hint">2 – 500 hosts</span>
               <span class="field-error">Valor fuera de rango (2 – 500)</span>
             </div>
@@ -393,13 +372,13 @@
                 <option value="admin">Administración</option>
                 <option value="servers">Servidores</option>
                 <option value="voip">VoIP</option>
+                <option value="wifi">WiFi / Invitados</option>
                 <option value="mgmt">Gestión</option>
                 <option value="custom">Personalizada</option>
               </select>
               <span class="field-hint">Afecta el color del borde de la tarjeta</span>
             </div>
           </div>
-
           <div class="grid-2">
             <div class="field">
               <label for="sel-vfloor">Piso asignado</label>
@@ -410,7 +389,6 @@
               <span class="field-hint">Dónde se usa esta VLAN</span>
             </div>
           </div>
-
           <div class="vlan-form-footer">
             <button class="btn-nav btn-back" onclick="cancelVlanEdit()">Cancelar</button>
             <button class="btn-nav btn-next" id="btn-save-vlan"
@@ -418,27 +396,28 @@
           </div>
         </div>
 
-        <!-- Barra con contador y botón agregar -->
+        <!-- Barra herramientas -->
         <div class="vlans-toolbar">
           <span class="vlans-count" id="vlans-count">0 VLANs</span>
           <button class="btn-add-vlan" onclick="showAddVlanForm()">+ Agregar VLAN</button>
         </div>
 
-        <!-- Contenedor de tarjetas generado por renderVLANCards() -->
+        <!-- Tarjetas de VLANs -->
         <div class="vlans-container" id="vlans-container">
           <p class="placeholder-msg">Completa los pasos anteriores para generar las VLANs</p>
         </div>
       </section><!-- /step-3 -->
 
-      <!-- ┌───────────────────────────────────────┐
-           │  PASO 5 — RESUMEN                     │
-           └───────────────────────────────────────┘ -->
+      <!-- ══════════════════════════════════════════
+           PASO 05 — RESUMEN
+           ══════════════════════════════════════════ -->
       <section class="step-content" id="step-4">
         <div class="step-header">
           <h2 class="step-title">Resumen del plan</h2>
-          <p class="step-desc">Tabla VLSM completa · Direccionamiento IPv4 e IPv6</p>
+          <p class="step-desc">Tabla VLSM · Enrutamiento documentado · Topología lógica</p>
         </div>
 
+        <!-- Métricas -->
         <div class="summary-metrics">
           <div class="metric-card">
             <span class="metric-val" id="sum-eff">—</span>
@@ -458,45 +437,45 @@
           </div>
         </div>
 
+        <!-- Tabla VLSM -->
         <div class="table-wrap">
           <table class="vlsm-table">
             <thead>
               <tr>
-                <th>VLAN</th>
-                <th>Nombre</th>
-                <th>Piso</th>
-                <th>Red IPv4</th>
-                <th>Máscara</th>
-                <th>Gateway IPv4</th>
-                <th>Broadcast</th>
-                <th>Hosts útiles</th>
-                <th>Efic.</th>
-                <th>Subred IPv6 /64</th>
-                <th>Gateway IPv6</th>
+                <th>VLAN</th><th>Nombre</th><th>Piso</th>
+                <th>Red IPv4</th><th>Máscara</th><th>Gateway IPv4</th>
+                <th>Broadcast</th><th>Hosts útiles</th><th>Efic.</th>
+                <th>Subred IPv6 /64</th><th>Gateway IPv6</th>
               </tr>
             </thead>
-            <tbody id="vlsm-tbody">
-              <!-- Filas generadas por script.js -->
-            </tbody>
+            <tbody id="vlsm-tbody"></tbody>
           </table>
         </div>
 
-        <div class="summary-download-row">
-          <button class="btn-download-summary" onclick="downloadSummary()">↓ Descargar Resumen (HTML)</button>
+        <!-- Topología SVG inline -->
+        <div style="margin-top:var(--gap-lg)">
+          <span class="group-label">Topología lógica</span>
+          <div id="topo-preview"
+               style="background:var(--bg-surface);border:1px solid var(--border);
+                      border-radius:var(--radius-md);padding:12px;
+                      overflow-x:auto;margin-top:8px">
+            <p class="placeholder-msg" style="padding:24px 0">
+              La topología se genera al calcular el plan
+            </p>
+          </div>
         </div>
       </section><!-- /step-4 -->
 
-      <!-- ┌───────────────────────────────────────┐
-           │  PASO 6 — EXPORTAR                    │
-           │  Tabs: Cisco IOS/XE · Huawei VRP     │
-           │  Último paso → botón "Finalizar"      │
-           └───────────────────────────────────────┘ -->
+      <!-- ══════════════════════════════════════════
+           PASO 06 — EXPORTAR
+           ══════════════════════════════════════════ -->
       <section class="step-content" id="step-5">
         <div class="step-header">
           <h2 class="step-title">Exportar configuraciones</h2>
-          <p class="step-desc">Configuraciones completas listas para aplicar en los equipos</p>
+          <p class="step-desc">Previsualiza la configuración · Un clic exporta el plan completo</p>
         </div>
 
+        <!-- Tabs: config por vendor + borrado seguro -->
         <div class="export-tabs" role="tablist">
           <button class="export-tab active" data-vendor="cisco"
                   onclick="selectExportTab(this)" role="tab">Cisco IOS/XE</button>
@@ -504,11 +483,11 @@
                   onclick="selectExportTab(this)" role="tab">Huawei VRP</button>
           <button class="export-tab" data-vendor="fortinet"
                   onclick="selectExportTab(this)" role="tab">FortiGate (FW)</button>
+          <button class="export-tab export-tab-danger" data-vendor="rollback"
+                  onclick="selectExportTab(this)" role="tab">⚠ Borrado Seguro</button>
         </div>
 
-        <!--
-          Tabs de texto (Cisco, Huawei, Fortinet): muestra .code-wrapper
-        -->
+        <!-- Área de código -->
         <div class="export-view-wrapper">
           <div class="code-wrapper" id="code-wrapper">
             <button class="copy-btn" id="copy-btn" onclick="copyCode()">Copiar</button>
@@ -516,11 +495,17 @@
           </div>
         </div>
 
+        <!-- Botón único de exportación completa -->
         <div class="download-row">
-          <button class="btn-download" onclick="downloadCisco()">↓ Cisco IOS/XE</button>
-          <button class="btn-download" onclick="downloadHuawei()">↓ Huawei VRP</button>
-          <button class="btn-download" onclick="downloadFortinet()">↓ FortiGate (FW)</button>
+          <button class="btn-download btn-download-primary" onclick="downloadPlan()">
+            ↓ Exportar plan completo (HTML)
+          </button>
         </div>
+        <p style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.6">
+          El archivo incluye: métricas · tabla VLSM · IPs de reserva · tabla de enrutamiento
+          (inter-VLAN via SVIs + rutas estáticas WAN) · topología SVG · configs
+          Cisco / Huawei / FortiGate · borrado seguro por vendor.
+        </p>
       </section><!-- /step-5 -->
 
       <!-- Botones de navegación -->
@@ -533,16 +518,13 @@
 
     </div><!-- /main-panel -->
 
-    <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-         COLUMNA DERECHA: estado del plan
-         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+    <!-- PANEL DERECHO: estado del plan -->
     <aside class="side-panel" aria-label="Estado del plan">
-
       <div class="side-card">
         <h3 class="side-title">Estado del plan</h3>
         <div class="side-rows">
           <div class="side-row"><span>Red base</span><span class="mono" id="st-network">—</span></div>
-          <div class="side-row"><span>Hosts (2×)</span><span id="st-hosts">—</span></div>
+          <div class="side-row"><span id="st-hosts-lbl">Hosts (2×)</span><span id="st-hosts">—</span></div>
           <div class="side-row"><span>VLANs</span><span id="st-vlans">—</span></div>
           <div class="side-row"><span>Vendor</span><span id="st-vendor">Cisco</span></div>
           <div class="side-row"><span>Redundancia</span><span id="st-redund">Single-Link</span></div>
@@ -573,21 +555,16 @@
         </div>
         <span class="score-lbl">score de eficiencia</span>
       </div>
-
     </aside>
 
   </main>
 
-  <!-- ╔══════════════════════════════════════════╗
-       ║   MODAL: PLAN FINALIZADO                ║
-       ╚══════════════════════════════════════════╝ -->
+  <!-- MODAL PLAN FINALIZADO -->
   <div class="modal-overlay hidden" id="modal-finish">
     <div class="modal">
       <div class="modal-icon">✓</div>
       <h3 class="modal-title">Plan de red completado</h3>
-      <p class="modal-desc">
-        ¿Deseas realizar un nuevo plan de red?
-      </p>
+      <p class="modal-desc">¿Deseas realizar un nuevo plan de red?</p>
       <div class="modal-actions">
         <button class="btn-modal-secondary" onclick="closeModal()">No, seguir revisando</button>
         <button class="btn-modal-primary" onclick="resetApp()">Sí, nuevo plan</button>
@@ -596,7 +573,6 @@
   </div>
 
   <div class="toast hidden" id="toast" role="alert" aria-live="polite"></div>
-
   <script src="script.js"></script>
 </body>
 </html>

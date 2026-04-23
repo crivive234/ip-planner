@@ -588,25 +588,41 @@ body {
 .vlan-card.type-servers { border-left: 3px solid #7c3aed; }
 .vlan-card.type-voip    { border-left: 3px solid #0891b2; }
 .vlan-card.type-mgmt    { border-left: 3px solid var(--warn); }
+.vlan-card.type-wifi    { border-left: 3px solid #7c3aed; }
 .vlan-card.type-custom  { border-left: 3px solid var(--text-muted); }
 
 /* Encabezado: nombre + acciones */
 .vlan-card-header {
   display:         flex;
-  align-items:     center;
+  align-items:     flex-start;
   justify-content: space-between;
   margin-bottom:   8px;
+  gap:             8px;
 }
-.vlan-card-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.vlan-card-name { font-size: 14px; font-weight: 600; color: var(--text-primary); flex-shrink: 0; }
 
 /* Grupo de acciones: badge + botones editar/eliminar */
-.vlan-card-actions { display: flex; align-items: center; gap: 8px; }
+.vlan-card-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 
 /* Badges de piso */
-.vlan-badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 500; border: 1px solid; }
-.vlan-badge.blue  { background: var(--accent-light); color: var(--accent); border-color: #c2d7f0; }
-.vlan-badge.green { background: var(--ok-bg); color: var(--ok); border-color: var(--ok-border); }
-.vlan-badge.amber { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-border); }
+.vlan-badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 500; border: 1px solid; white-space: nowrap; }
+.vlan-badge.blue   { background: var(--accent-light); color: var(--accent); border-color: #c2d7f0; }
+.vlan-badge.green  { background: var(--ok-bg); color: var(--ok); border-color: var(--ok-border); }
+.vlan-badge.amber  { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-border); }
+.vlan-badge.purple { background: #f5f0ff; color: #7c3aed; border-color: #d8b4fe; }
+
+/* Badge de advertencia: hosts > promedio por piso */
+.vlan-warn-badge {
+  font-size:     11px;
+  padding:       3px 9px;
+  border-radius: 20px;
+  background:    var(--warn-bg);
+  color:         var(--warn);
+  border:        1px solid var(--warn-border);
+  font-weight:   500;
+  white-space:   nowrap;
+  cursor:        help;
+}
 
 /* Botones de icono (editar / eliminar) */
 .btn-icon {
@@ -634,6 +650,150 @@ body {
 .vlan-card-detail { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); line-height: 1.8; }
 .vlan-card-detail .v4 { color: var(--text-secondary); }
 .vlan-card-detail .v6 { color: var(--accent-mid); }
+
+
+/* ── Sección de IPs de reserva dentro de la tarjeta VLAN ──────── */
+
+.vlan-reserve-section {
+  margin-top:  10px;
+  border-top:  1px solid var(--border);
+  padding-top: 8px;
+}
+
+.vlan-reserve-toggle {
+  display:     flex;
+  align-items: center;
+  gap:         8px;
+  cursor:      pointer;
+  user-select: none;
+  padding:     4px 0;
+  transition:  color 0.15s;
+}
+.vlan-reserve-toggle:hover { color: var(--accent); }
+.vlan-reserve-toggle:hover .reserve-toggle-label { color: var(--accent); }
+
+.reserve-toggle-label {
+  font-size:   12px;
+  font-weight: 500;
+  color:       var(--text-secondary);
+}
+
+.reserve-badge {
+  font-size:     10px;
+  padding:       2px 8px;
+  border-radius: 20px;
+  background:    var(--bg-surface);
+  color:         var(--text-muted);
+  border:        1px solid var(--border);
+  font-weight:   500;
+}
+.reserve-badge.active {
+  background:  var(--accent-light);
+  color:       var(--accent);
+  border-color:#c2d7f0;
+}
+
+.reserve-arrow {
+  margin-left: auto;
+  font-size:   14px;
+  color:       var(--text-muted);
+  transition:  transform 0.2s;
+  display:     inline-block;
+  line-height: 1;
+}
+.reserve-arrow.open { transform: rotate(180deg); }
+
+.vlan-reserve-body        { margin-top: 8px; }
+.vlan-reserve-body.hidden { display: none; }
+
+.reserve-empty {
+  font-size:   12px;
+  color:       var(--text-muted);
+  font-style:  italic;
+  padding:     6px 0 8px;
+}
+
+.reserve-full {
+  font-size: 12px;
+  color:     var(--warn);
+  padding:   6px 0;
+}
+
+/* Tabla de reservas existentes */
+.reserve-table {
+  width:           100%;
+  border-collapse: collapse;
+  font-size:       12px;
+  margin-bottom:   10px;
+}
+.reserve-table th {
+  text-align:      left;
+  padding:         5px 8px;
+  font-size:       10px;
+  font-weight:     700;
+  text-transform:  uppercase;
+  letter-spacing:  0.05em;
+  color:           var(--text-muted);
+  background:      var(--bg-surface);
+  border-bottom:   1px solid var(--border);
+}
+.reserve-table td {
+  padding:       5px 8px;
+  border-bottom: 1px solid var(--border);
+  color:         var(--text-secondary);
+}
+.reserve-table tbody tr:last-child td { border-bottom: none; }
+.reserve-table td.res-alias { font-weight: 500; color: var(--text-primary); }
+.reserve-table td.res-ip4   { font-family: var(--font-mono); }
+.reserve-table td.res-ip6   { font-family: var(--font-mono); color: var(--accent-mid); }
+.reserve-table .res-none    { color: var(--text-disabled); }
+
+/* Pills de stack (IPv4 / IPv6 / Dual) */
+.stack-pill {
+  font-size:     10px;
+  padding:       2px 7px;
+  border-radius: 20px;
+  font-weight:   600;
+  letter-spacing:0.04em;
+  white-space:   nowrap;
+}
+.stack-pill.stack-ipv4 { background: var(--accent-light); color: var(--accent);  border: 1px solid #c2d7f0; }
+.stack-pill.stack-ipv6 { background: #f0fdf4;             color: #15803d;        border: 1px solid #86efac; }
+.stack-pill.stack-dual { background: #fdf4ff;             color: #7c3aed;        border: 1px solid #d8b4fe; }
+
+/* Formulario de nueva reserva */
+.reserve-form {
+  background:    var(--bg-surface);
+  border:        1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding:       12px;
+  margin-bottom: 10px;
+}
+.reserve-form.hidden { display: none; }
+
+.reserve-form-footer {
+  display:         flex;
+  justify-content: flex-end;
+  gap:             8px;
+  margin-top:      12px;
+  padding-top:     10px;
+  border-top:      1px solid var(--border);
+}
+
+/* Botón agregar reserva */
+.btn-add-reserve {
+  padding:       5px 14px;
+  background:    var(--bg-panel);
+  border:        1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color:         var(--accent);
+  font-size:     12px;
+  font-weight:   500;
+  font-family:   var(--font-ui);
+  cursor:        pointer;
+  transition:    all 0.2s;
+}
+.btn-add-reserve:hover { background: var(--accent-light); }
 
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -684,6 +844,8 @@ body {
 }
 .export-tab:hover  { border-color: var(--border-strong); color: var(--text-primary); background: var(--bg-hover); }
 .export-tab.active { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
+.export-tab[data-vendor="rollback"]        { color: var(--error); border-color: var(--error-border); }
+.export-tab[data-vendor="rollback"].active { background: var(--error-bg); border-color: var(--error); color: var(--error); }
 
 /* Contenedor compartido que alterna entre código y topología */
 .export-view-wrapper {
@@ -726,6 +888,14 @@ body {
   box-shadow: var(--shadow-sm);
 }
 .btn-download:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); box-shadow: var(--shadow-md); }
+
+.btn-download-primary {
+  background:  var(--accent);
+  border-color:var(--accent);
+  color:       #fff;
+  font-weight: 600;
+}
+.btn-download-primary:hover { background: var(--accent-mid); border-color: var(--accent-mid); color: #fff; }
 
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -914,33 +1084,7 @@ body {
 
   .toast { bottom: 12px; right: 12px; left: 12px; text-align: center; font-size: 12px; }
 
-  .summary-download-row { justify-content: stretch; }
-  .btn-download-summary { width: 100%; text-align: center; }
 }
 
-/* Botón de descarga del resumen */
-.summary-download-row {
-  display:         flex;
-  justify-content: flex-end;
-  margin-top:      var(--gap);
-}
-
-.btn-download-summary {
-  padding:       9px 20px;
-  background:    var(--accent);
-  border:        1px solid var(--accent);
-  border-radius: var(--radius-md);
-  color:         #fff;
-  font-size:     13px;
-  font-weight:   500;
-  font-family:   var(--font-ui);
-  cursor:        pointer;
-  transition:    all 0.2s;
-  box-shadow:    var(--shadow-sm);
-}
-.btn-download-summary:hover {
-  background:    var(--accent-mid);
-  border-color:  var(--accent-mid);
-  box-shadow:    var(--shadow-md);
-}
+/* .summary-download-row — eliminado: el export unificado vive en el paso 06 */
 
