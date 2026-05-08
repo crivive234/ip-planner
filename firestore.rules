@@ -1,0 +1,37 @@
+/*
+ * NetPlan Pro v4.0 — Reglas de seguridad de Firestore
+ *
+ * COPIAR Y PEGAR estas reglas en:
+ *   Firebase Console → Firestore Database → Rules → Publish
+ *
+ * Garantizan que cada usuario solo puede leer y escribir
+ * SUS PROPIOS planes, identificados por su UID de Firebase Auth.
+ * Los planes de otros usuarios son inaccesibles aunque alguien
+ * conozca el UID o el ID del documento.
+ *
+ * Sin estas reglas, el "modo producción" de Firestore bloquea
+ * todo por defecto (deny-all). Con estas reglas, los usuarios
+ * autenticados (incluyendo anónimos) pueden gestionar lo suyo.
+ */
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /* Cada usuario gestiona sus propios planes en
+       users/{su uid}/plans/{planId}.
+       request.auth.uid debe coincidir con {userId}. */
+    match /users/{userId}/plans/{planId} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == userId;
+    }
+
+    /* (Opcional) Si más adelante agregas planes compartidos:
+       match /plans_shared/{planId} {
+         allow read:  if resource.data.viewers.hasAny([request.auth.uid]);
+         allow write: if resource.data.owner == request.auth.uid;
+       }
+    */
+  }
+}

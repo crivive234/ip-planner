@@ -65,8 +65,10 @@ const S = {
   /* UI */
   step:             0,
   export_vendor:    'cisco',   // tab activo en paso 6
+  rollback_vendor:  'cisco',   // sub-selector dentro de pestaña Borrado Seguro
   vlan_edit_id:     null,      // ID de VLAN siendo editada (null = nueva)
   reserve_expanded: {},        // mapa vlanId → boolean (sección IPs de reserva abierta)
+  cloud_plan_id:    null,      // ID del plan en Firestore si fue cargado/guardado en nube
 };
 
 
@@ -275,9 +277,12 @@ function validateStep(step) {
   let valid = false;
 
   if (step === 0) {
-    /* pisos y core_piso siempre válidos (selects con default) */
-    const hOk = S.hosts_piso !== null && S.hosts_piso >= 1 && S.hosts_piso <= 500;
-    valid = hOk;
+    /* Ahora pisos y core_piso vienen de inputs numéricos: hay que validarlos */
+    const pisosOk = S.pisos     !== null && S.pisos     >= 1 && S.pisos     <= 50;
+    const maxCore = S.pisos || 50;
+    const coreOk  = S.core_piso !== null && S.core_piso >= 1 && S.core_piso <= maxCore;
+    const hOk     = S.hosts_piso !== null && S.hosts_piso >= 1 && S.hosts_piso <= 500;
+    valid = pisosOk && coreOk && hOk;
   }
 
   if (step === 1) {
@@ -320,6 +325,7 @@ function selectToggle(groupId, btn) {
     S.redundancia = val;
     setText('st-redund', val === 'single' ? 'Single-Link' : 'Dual-Link (LACP)');
   }
+  autosave();
 }
 
 /** Selecciona vendor y actualiza estado + panel lateral. */
@@ -328,41 +334,75 @@ function selectVendor(btn) {
   btn.classList.add('active');
   S.vendor = btn.dataset.value;
   setText('st-vendor', btn.querySelector('.vendor-name').textContent);
+  autosave();
 }
 
 /**
- * Actualiza S.pisos y regenera las opciones de sel-core.
- * Si el core actual supera los nuevos pisos, se resetea a 1.
- * También resetea vlan_defs para que se recalculen con los nuevos pisos.
+ * Maneja el cambio en el input numérico de pisos.
+ * - Valida rango 1–50.
+ * - Actualiza dinámicamente el atributo max del input de core.
+ * - Si el core actual excede los nuevos pisos, lo ajusta automáticamente.
+ * - Resetea vlan_defs para que se recalculen con los nuevos pisos.
  */
 function onPisosChange() {
-  S.pisos = parseInt(document.getElementById('sel-pisos').value, 10);
+  const inpPisos = document.getElementById('inp-pisos');
+  const inpCore  = document.getElementById('inp-core');
+  const raw      = inpPisos.value.trim();
+  const pisosVal = parseInt(raw, 10);
+  const pisosOk  = !isNaN(pisosVal) && pisosVal >= 1 && pisosVal <= 50;
 
-  /* Actualizar opciones de sel-core dinámicamente */
-  const selCore  = document.getElementById('sel-core');
-  const prev     = parseInt(selCore.value, 10);
-  selCore.innerHTML = '';
+  /* El campo vacío también marca como inválido (sin mostrar error rojo) */
+  setFieldValidity('field-pisos', pisosOk || raw === '');
 
-  for (let i = 1; i <= S.pisos; i++) {
-    const opt       = document.createElement('option');
-    opt.value       = i;
-    opt.textContent = i === 1 ? 'Piso 1 (recomendado)' : `Piso ${i}`;
-    selCore.appendChild(opt);
+  if (pisosOk) {
+    S.pisos = pisosVal;
+
+    /* Actualizar restricción del input de core */
+    inpCore.max = pisosVal;
+    const hint = document.getElementById('hint-core');
+    if (hint) hint.textContent = `Rango: 1 – ${pisosVal} (debe ser ≤ número de pisos)`;
+    const errMsg = document.getElementById('error-core');
+    if (errMsg) errMsg.textContent = `Debe estar entre 1 y ${pisosVal}`;
+
+    /* Si el core actual ya no cabe en el nuevo rango, ajustarlo al máximo permitido */
+    const coreVal = parseInt(inpCore.value, 10);
+    if (!isNaN(coreVal) && coreVal > pisosVal) {
+      inpCore.value = pisosVal;
+    }
+
+    /* Forzar recálculo de VLANs con los nuevos pisos */
+    S.vlan_defs = [];
+  } else {
+    S.pisos = null;
   }
 
-  /* Conservar valor anterior si aún es válido, de lo contrario piso 1 */
-  selCore.value = prev <= S.pisos ? prev : 1;
-  S.core_piso   = parseInt(selCore.value, 10);
-
-  /* Resetear VLANs para que se recalculen con los nuevos pisos */
-  S.vlan_defs = [];
-
+  /* Re-validar core porque su max pudo haber cambiado */
+  validateCoreInput();
   validateStep(0);
+  autosave();
 }
 
-/** Actualiza S.core_piso cuando cambia el select de Core. */
+/** Maneja el cambio en el input numérico del piso del Core / CPD. */
 function onCoreChange() {
-  S.core_piso = parseInt(document.getElementById('sel-core').value, 10);
+  validateCoreInput();
+  validateStep(0);
+  autosave();
+}
+
+/**
+ * Valida el input del Core respetando el rango dinámico [1, S.pisos].
+ * Encapsulado para poder llamarlo desde onPisosChange y onCoreChange.
+ */
+function validateCoreInput() {
+  const inpCore = document.getElementById('inp-core');
+  const raw     = inpCore.value.trim();
+  const coreVal = parseInt(raw, 10);
+  const max     = S.pisos || 50;
+  const coreOk  = !isNaN(coreVal) && coreVal >= 1 && coreVal <= max;
+
+  setFieldValidity('field-core', coreOk || raw === '');
+
+  S.core_piso = coreOk ? coreVal : null;
 }
 
 /**
@@ -374,6 +414,7 @@ function onGrowthChange() {
   S.vlan_defs = [];            // fuerza recálculo de hosts por VLAN
   if (S.pisos && S.hosts_piso) runAnalysis();
   validateStep(0);
+  autosave();
 }
 
 /**
@@ -409,6 +450,7 @@ function onHostsChange() {
   }
 
   validateStep(0);
+  autosave();
 }
 
 
@@ -490,6 +532,7 @@ function onOverrideChange() {
   setFieldValidity('field-override', val === '' || parseCIDR(val) !== null);
   if (S.pisos && S.hosts_piso) runAnalysis();
   validateStep(1);
+  autosave();
 }
 
 
@@ -520,6 +563,7 @@ function onServicesChange() {
   if (domOk) S.domain = domVal.trim();
 
   validateStep(2);
+  autosave();
 }
 
 /** Muestra u oculta el bloque de info IPv6. */
@@ -531,6 +575,7 @@ function onIPv6Toggle(cb) {
     setText('ipv6-prefix', S.ula_prefix);
     setText('st-prefix', S.ula_prefix.replace('::/48', '…/48'));
   }
+  autosave();
 }
 
 /**
@@ -553,6 +598,7 @@ function onWanChange() {
   if (rtOk)  S.wan_routes  = routes;
 
   validateStep(2);
+  autosave();
 }
 
 
@@ -684,6 +730,7 @@ function deleteVlan(id) {
   renderVLANCards();
   updateVlansCount();
   showToast(`VLAN ${id} eliminada`, 'success');
+  autosave();
 }
 
 /** Cierra el formulario sin guardar. */
@@ -756,6 +803,7 @@ function saveVlan() {
   buildVLANPlan();
   renderVLANCards();
   updateVlansCount();
+  autosave();
 }
 
 /** Actualiza el contador de VLANs en la barra de herramientas. */
@@ -1125,6 +1173,7 @@ function saveReservation(vlanId) {
   renderVLANCards();
   updateVlansCount();
   showToast(`Reserva "${alias}" agregada a VLAN ${vlanId}`, 'success');
+  autosave();
 }
 
 /**
@@ -1140,6 +1189,7 @@ function deleteReservation(vlanId, resId) {
   renderVLANCards();
   updateVlansCount();
   showToast(`Reserva${prev ? ` "${prev.alias}"` : ''} eliminada de VLAN ${vlanId}`, 'success');
+  autosave();
 }
 
 
@@ -1740,11 +1790,39 @@ function getCoreIP() {
       downloadPlan()        descarga HTML autocontenido
    ══════════════════════════════════════════════════════════════ */
 
-/** Selecciona el tab de exportación y renderiza el código. */
+/**
+ * Selecciona el tab de exportación principal.
+ * Para la pestaña "Borrado Seguro": muestra el sub-selector de vendor
+ * y sincroniza su botón activo con S.rollback_vendor.
+ */
 function selectExportTab(btn) {
   document.querySelectorAll('.export-tab').forEach(t => t.classList.remove('active'));
   btn.classList.add('active');
   S.export_vendor = btn.dataset.vendor;
+
+  const subtabs = document.getElementById('rollback-subtabs');
+  if (S.export_vendor === 'rollback') {
+    /* Asegurar default y sincronizar UI del sub-selector */
+    if (!S.rollback_vendor) S.rollback_vendor = 'cisco';
+    document.querySelectorAll('.rb-subtab').forEach(t =>
+      t.classList.toggle('active', t.dataset.vendor === S.rollback_vendor)
+    );
+    subtabs?.classList.remove('hidden');
+  } else {
+    subtabs?.classList.add('hidden');
+  }
+
+  renderExportCode();
+}
+
+/**
+ * Selecciona el vendor cuyo borrado seguro se va a mostrar.
+ * Solo se usa cuando la pestaña "Borrado Seguro" está activa.
+ */
+function selectRollbackVendor(btn) {
+  document.querySelectorAll('.rb-subtab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  S.rollback_vendor = btn.dataset.vendor;
   renderExportCode();
 }
 
@@ -1776,15 +1854,15 @@ function copyCode() {
    ─────────────────────────────────────────────────────────────── */
 
 /**
- * Genera el borrado seguro según el vendor activo.
+ * Genera el borrado seguro del vendor seleccionado en el sub-selector.
  * Estrategia: comandos "no/undo/delete" en orden inverso al de aplicación.
  */
 function generateRollback() {
-  switch (S.export_vendor) {
+  switch (S.rollback_vendor) {
     case 'cisco':    return generateRollbackCisco();
     case 'huawei':   return generateRollbackHuawei();
     case 'fortinet': return generateRollbackFortinet();
-    default:         return '— Selecciona un vendor —';
+    default:         return generateRollbackCisco();
   }
 }
 
@@ -1957,137 +2035,780 @@ function generateRollbackFortinet() {
  * Genera un SVG de topología lógica con los datos del plan actual.
  * Layout: Internet → Firewall → Core Switch → Switch por piso (columnas)
  */
+/**
+ * Genera la topología lógica como SVG.
+ *
+ * Mejoras vs versión anterior:
+ *  - Layout dinámico: ancho/alto se calculan según pisos y VLANs reales
+ *  - Soporta dual-link: dibuja doble línea con etiqueta "Po1 (LACP)"
+ *  - No trunca VLANs: si hay muchas, fluyen en filas debajo del switch
+ *  - Diferencia visual Core L3 (azul oscuro) vs Access L2 (azul claro)
+ *  - Cuenta switches por piso según hosts_piso/puertos
+ *  - Anotaciones de WAN routes y DNS si están definidos
+ *  - Modo wrap para 6+ pisos: dispone los switches en filas
+ */
 function generateTopologySVG() {
   if (!S.vlans.length) return '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
 
+  /* ── Paleta (coherente con la app) ── */
+  const CLR = {
+    accent:'#1a6fc4', accentDk:'#0f4d8f', accentLt:'#e8f0fb',
+    ok:'#1a7a4a', okBg:'#e8f5ee',
+    warn:'#875a00', warnBg:'#fff7ed',
+    err:'#c0392b', errBg:'#fef2f2',
+    purple:'#7c3aed', voip:'#0891b2',
+    border:'#d1dae6', borderStrong:'#94a3b8',
+    text:'#1a2332', muted:'#718096', bg:'#f7f9fb',
+  };
+  const TYPE_CLR = {
+    users:CLR.accent, admin:CLR.ok, servers:CLR.purple,
+    voip:CLR.voip, wifi:CLR.purple, mgmt:CLR.warn, custom:CLR.muted,
+  };
+
+  /* ── Configuración de layout ── */
   const pisos     = S.pisos;
-  const colW      = 180;       // ancho por columna (piso)
-  const margin    = 40;
-  const svgW      = Math.max(700, margin * 2 + colW * pisos);
-  const svgH      = 560;
+  const dual      = S.redundancia === 'dual';
+  const swPerPiso = Math.max(1, Math.ceil((S.hosts_piso || 0) / S.puertos));
 
-  // Coordenadas de los nodos principales
-  const cx    = svgW / 2;
-  const inetY = 60,  fwY = 150, coreY = 260;
-  const swY   = 390, vlanY = 480;
+  /* Modo wrap: si hay más de 5 pisos, los switches se disponen en filas */
+  const WRAP_AT       = 5;
+  const swPerRow      = pisos > WRAP_AT ? Math.ceil(pisos / Math.ceil(pisos / WRAP_AT)) : pisos;
+  const switchRows    = Math.ceil(pisos / swPerRow);
 
-  // Colores coherentes con la paleta de la app
-  const CLR = { accent:'#1a6fc4', ok:'#1a7a4a', warn:'#875a00',
-                border:'#d1dae6', text:'#1a2332', muted:'#718096',
-                bg:'#f7f9fb', panel:'#ffffff', purple:'#7c3aed', voip:'#0891b2' };
+  /* Anchos */
+  const colW         = 170;          // ancho por columna (switch)
+  const margin       = 50;
+  const svgW         = Math.max(720, margin * 2 + colW * swPerRow);
 
-  const TYPE_CLR = { users:CLR.accent, admin:CLR.ok, servers:CLR.purple,
-                     voip:CLR.voip, wifi:CLR.purple, mgmt:CLR.warn, custom:CLR.muted };
+  /* VLAN chips: cuántas caben por fila bajo cada switch */
+  const chipW        = 44;
+  const chipH        = 18;
+  const chipGap      = 4;
+  const chipsPerRow  = Math.max(2, Math.floor((colW - 8) / (chipW + chipGap)));
 
-  // Helper: rectángulo con texto centrado
-  function node(x, y, w, h, fill, stroke, label, sub='', r=8) {
-    return `<rect x="${x-w/2}" y="${y-h/2}" width="${w}" height="${h}" rx="${r}"
-      fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>
-      <text x="${x}" y="${y-4}" text-anchor="middle" font-family="'DM Mono',monospace"
-        font-size="11" font-weight="600" fill="${CLR.text}">${escHtml(label)}</text>
-      ${sub ? `<text x="${x}" y="${y+11}" text-anchor="middle" font-family="monospace"
-        font-size="9.5" fill="${CLR.muted}">${escHtml(sub)}</text>` : ''}`;
-  }
-
-  // Helper: línea
-  function line(x1,y1,x2,y2,dash='') {
-    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
-      stroke="${CLR.border}" stroke-width="1.5" ${dash?`stroke-dasharray="${dash}"`:''} marker-end="url(#arr)"/>`;
-  }
-
-  // Posiciones de switches por piso
-  const swXs = Array.from({length: pisos}, (_, i) =>
-    pisos === 1 ? cx : margin + colW/2 + i * colW
-  );
-
-  // Líneas de Core → Access switches
-  let lines = swXs.map(sx => line(cx, coreY+22, sx, swY-22)).join('');
-  // FW → Core
-  lines = line(cx, fwY+22, cx, coreY-22) + lines;
-  // Internet → FW
-  lines = line(cx, inetY+18, cx, fwY-22) + lines;
-
-  // VLANs por tipo de piso
+  /* Calcular cuántas filas de chips necesita cada switch */
   const floorVlans = (fl) => S.vlans.filter(v =>
-    v.floor === 'all' || v.floor === 'core' && fl === S.core_piso
+    v.floor === 'all' || (v.floor === 'core' && fl === S.core_piso)
+  );
+  const maxVlansPerSw = Math.max(...Array.from({length: pisos}, (_, i) => floorVlans(i+1).length), 1);
+  const maxChipRows   = Math.ceil(maxVlansPerSw / chipsPerRow);
+
+  /* Alturas dinámicas */
+  const headerH      = 60;
+  const inetH        = 50;   // altura ocupada por nodo internet
+  const fwH          = 50;
+  const coreH        = 60;
+  const swH          = 50;
+  const chipsBlockH  = maxChipRows * (chipH + 4) + 8;
+  const vGap         = 70;   // separación vertical entre niveles
+  const rowGap       = 30;   // separación entre filas de switches en wrap mode
+  const legendH      = 40;
+  const footerH      = 20;
+
+  /* Coordenadas Y de cada nivel */
+  const inetY  = headerH + inetH/2;
+  const fwY    = inetY  + inetH/2 + vGap + fwH/2;
+  const coreY  = fwY    + fwH/2   + vGap + coreH/2;
+  const swYs   = [];
+  for (let r = 0; r < switchRows; r++) {
+    const y = coreY + coreH/2 + vGap + r * (swH + chipsBlockH + rowGap) + swH/2;
+    swYs.push(y);
+  }
+  const svgH = swYs[swYs.length - 1] + swH/2 + chipsBlockH + legendH + footerH;
+
+  /* Coordenadas X de switches */
+  const cx = svgW / 2;
+  const swPos = [];                 // [{x, y, floor, isCore}]
+  for (let i = 0; i < pisos; i++) {
+    const row     = Math.floor(i / swPerRow);
+    const col     = i % swPerRow;
+    const colsRow = (row === switchRows - 1)
+      ? (pisos - row * swPerRow)
+      : swPerRow;
+    /* Centrar la última fila si quedó incompleta */
+    const x = svgW/2 - (colsRow * colW)/2 + colW/2 + col * colW;
+    swPos.push({ x, y: swYs[row], floor: i + 1, isCore: (i + 1) === S.core_piso });
+  }
+
+  /* ── Helpers de dibujo ── */
+  const esc = escHtml;
+  function node(x, y, w, h, fill, stroke, label, sub='', strokeW=1.5) {
+    return `<rect x="${x-w/2}" y="${y-h/2}" width="${w}" height="${h}" rx="8"
+        fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}"/>
+      <text x="${x}" y="${y-3}" text-anchor="middle" font-family="'DM Mono',monospace"
+        font-size="11" font-weight="600" fill="${CLR.text}">${esc(label)}</text>
+      ${sub ? `<text x="${x}" y="${y+12}" text-anchor="middle" font-family="monospace"
+        font-size="9.5" fill="${CLR.muted}">${esc(sub)}</text>` : ''}`;
+  }
+
+  /**
+   * Línea entre nodos. Si dual=true, dibuja DOS líneas paralelas con
+   * etiqueta "Po (LACP)" para representar EtherChannel/Eth-Trunk.
+   * Si dual=false, una sola línea con flecha.
+   */
+  function link(x1, y1, x2, y2, isDual = dual) {
+    if (!isDual) {
+      return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
+        stroke="${CLR.borderStrong}" stroke-width="1.6"/>`;
+    }
+    /* Dos líneas paralelas separadas por offset perpendicular */
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    const offX = (-dy / len) * 3;   // offset perpendicular ±3px
+    const offY = (dx / len) * 3;
+    const mx = (x1 + x2) / 2;
+    const my = (y1 + y2) / 2;
+    return `
+      <line x1="${x1+offX}" y1="${y1+offY}" x2="${x2+offX}" y2="${y2+offY}"
+        stroke="${CLR.accent}" stroke-width="1.4"/>
+      <line x1="${x1-offX}" y1="${y1-offY}" x2="${x2-offX}" y2="${y2-offY}"
+        stroke="${CLR.accent}" stroke-width="1.4"/>
+      <rect x="${mx-16}" y="${my-7}" width="32" height="14" rx="3"
+        fill="#fff" stroke="${CLR.accent}" stroke-width="0.8"/>
+      <text x="${mx}" y="${my+3}" text-anchor="middle" font-family="monospace"
+        font-size="8" font-weight="600" fill="${CLR.accent}">LACP</text>`;
+  }
+
+  /* ── Construir nodos ── */
+  let svg = '';
+
+  /* Líneas Internet → FW → Core (siempre simples) */
+  svg += `<line x1="${cx}" y1="${inetY+inetH/2}" x2="${cx}" y2="${fwY-fwH/2}"
+    stroke="${CLR.borderStrong}" stroke-width="1.6"/>`;
+  svg += `<line x1="${cx}" y1="${fwY+fwH/2}" x2="${cx}" y2="${coreY-coreH/2}"
+    stroke="${CLR.borderStrong}" stroke-width="1.6"/>`;
+
+  /* Líneas Core → switches de acceso (con dual-link si aplica) */
+  swPos.forEach(sp => {
+    if (sp.isCore) return;          // el switch core es el mismo del centro
+    svg += link(cx, coreY + coreH/2, sp.x, sp.y - swH/2);
+  });
+
+  /* Internet */
+  svg += node(cx, inetY, 130, inetH, CLR.warnBg, '#f59e0b',
+    'INTERNET / WAN',
+    S.wan_nexthop ? `Next-hop: ${S.wan_nexthop}` : '');
+
+  /* Firewall */
+  svg += node(cx, fwY, 170, fwH, CLR.errBg, '#f87171',
+    'FIREWALL — FW-01',
+    `IP Gestión: ${getFWip()}`);
+
+  /* Core Switch (más grande, color destacado) */
+  svg += node(cx, coreY, 220, coreH, CLR.accentLt, CLR.accentDk,
+    'CORE SWITCH L3',
+    `${S.vlans.length} SVIs · ${getCoreIP()} · Piso ${S.core_piso}`, 2);
+
+  /* Anotación de routing — la pongo encima del core para evitar
+     que las líneas LACP que bajan al core se le superpongan */
+  svg += `<text x="${cx}" y="${coreY - coreH/2 - 8}" text-anchor="middle"
+    font-size="9" fill="${CLR.muted}" font-family="monospace">
+    Inter-VLAN via SVIs · Default → FW · ${dual ? 'Uplinks LACP (2x)' : 'Uplinks Single-Link'}</text>`;
+
+  /* Switches de acceso + chips de VLANs */
+  swPos.forEach(sp => {
+    const vstk     = floorVlans(sp.floor);
+    const isCore   = sp.isCore;
+    const fill     = isCore ? CLR.accentLt : CLR.bg;
+    const stroke   = isCore ? CLR.accent   : CLR.borderStrong;
+    const lbl      = isCore ? `SW-CORE (P${sp.floor})` : `SW-ACC-P${sp.floor}`;
+    const subLbl   = isCore
+      ? 'Core L3 + Access'
+      : `${swPerPiso} switch${swPerPiso > 1 ? 'es' : ''} · L2`;
+
+    svg += node(sp.x, sp.y, colW - 16, swH, fill, stroke, lbl, subLbl, isCore ? 2 : 1.5);
+
+    /* Chips de VLAN — TODAS, sin truncar, en múltiples filas */
+    const chipsStartX = sp.x - colW/2 + 4;
+    const chipsStartY = sp.y + swH/2 + 12;
+    vstk.forEach((v, vi) => {
+      const r   = Math.floor(vi / chipsPerRow);
+      const c   = vi % chipsPerRow;
+      const cx2 = chipsStartX + c * (chipW + chipGap);
+      const cy2 = chipsStartY + r * (chipH + 4);
+      const clr = TYPE_CLR[v.type] || CLR.muted;
+      svg += `<rect x="${cx2}" y="${cy2}" width="${chipW}" height="${chipH}" rx="3"
+        fill="${clr}33" stroke="${clr}" stroke-width="1"/>
+        <text x="${cx2 + chipW/2}" y="${cy2 + chipH/2 + 3}" text-anchor="middle"
+          font-family="monospace" font-size="8.5" font-weight="700" fill="${clr}">V${v.id}</text>`;
+    });
+
+    /* Línea sutil del switch a sus chips */
+    svg += `<line x1="${sp.x}" y1="${sp.y + swH/2}" x2="${sp.x}" y2="${chipsStartY - 2}"
+      stroke="${CLR.border}" stroke-width="1" stroke-dasharray="2,2"/>`;
+  });
+
+  /* ── Leyenda de tipos VLAN al pie ── */
+  const usedTypes = [...new Set(S.vlans.map(v => v.type))];
+  const legendY   = svgH - legendH;
+  let legend      = '';
+  usedTypes.forEach((t, i) => {
+    const lx = margin + i * 95;
+    const clr = TYPE_CLR[t] || CLR.muted;
+    legend += `<rect x="${lx}" y="${legendY + 8}" width="11" height="11" rx="2"
+      fill="${clr}1a" stroke="${clr}" stroke-width="0.8"/>
+      <text x="${lx + 16}" y="${legendY + 17}" font-size="9.5"
+        fill="${CLR.text}" font-family="sans-serif">${esc(t)}</text>`;
+  });
+
+  /* ── SVG final ── */
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${svgW} ${svgH}"
+    width="${svgW}" height="${svgH}" preserveAspectRatio="xMidYMid meet">
+
+    <!-- fondo -->
+    <rect width="${svgW}" height="${svgH}" fill="#fbfcfd" rx="12"/>
+
+    <!-- título -->
+    <text x="${margin}" y="26" font-family="'DM Mono',monospace"
+      font-size="14" font-weight="600" fill="${CLR.accent}">
+      Topología Lógica — ${esc(S.domain)}</text>
+    <text x="${margin}" y="42" font-family="sans-serif" font-size="10" fill="${CLR.muted}">
+      Red base: ${S.net ? S.net.address+'/'+S.net.prefix : '—'} ·
+      ${S.ipv6 ? 'Dual Stack (IPv4+IPv6)' : 'IPv4'} ·
+      ${dual ? 'Redundancia: Dual-Link LACP' : 'Redundancia: Single-Link'} ·
+      ${pisos} piso${pisos !== 1 ? 's' : ''} · ${S.vlans.length} VLAN${S.vlans.length !== 1 ? 's' : ''}</text>
+
+    ${svg}
+
+    <!-- leyenda -->
+    ${legend}
+  </svg>`;
+}
+
+/* ── GENERADORES DE TOPOLOGÍA EDITABLE ──────────────────────────
+   Tres formatos adicionales al SVG inline:
+     · Mermaid  → texto plano que renderiza GitHub/Notion/Confluence
+     · drawio   → XML editable en draw.io / diagrams.net
+   Ambos preservan jerarquía Internet → FW → Core → Access + VLANs.
+   ─────────────────────────────────────────────────────────────── */
+
+/**
+ * Genera código Mermaid (graph TD) listo para pegar en markdown.
+ * GitHub, Notion y Confluence lo renderizan automáticamente.
+ */
+function generateMermaid() {
+  if (!S.vlans.length) return '';
+
+  const dual = S.redundancia === 'dual';
+  const linkStyle = dual ? '===' : '-->';   // === = línea gruesa para LACP
+
+  const floorVlans = (fl) => S.vlans.filter(v =>
+    v.floor === 'all' || (v.floor === 'core' && fl === S.core_piso)
   );
 
-  // SVIs label en core
-  const coreVlans = S.vlans.map(v =>
-    `VLAN${v.id} ${v.gateway_v4}`
-  ).slice(0, 6).join('  |  ');
+  let m = '';
+  m += '%%{init: {"theme":"base","themeVariables":{"primaryColor":"#e8f0fb","primaryBorderColor":"#1a6fc4","lineColor":"#94a3b8"}}}%%\n';
+  m += 'graph TD\n';
 
-  // Nodos de switches por piso + VLANs
-  let swNodes = swXs.map((sx, i) => {
-    const fl    = i + 1;
-    const label = fl === S.core_piso ? `SW-CORE (Piso ${fl})` : `SW-ACC-0${fl}`;
-    const sub   = `Piso ${fl}${fl === S.core_piso ? ' — CPD' : ''}`;
-    const fill  = fl === S.core_piso ? '#e8f0fb' : CLR.bg;
-    const vstk  = floorVlans(fl);
-    const vlabels = vstk.slice(0,4).map((v,vi) => {
-      const clr = TYPE_CLR[v.type] || CLR.muted;
-      return `<rect x="${sx - colW/2 + 4 + vi*42}" y="${vlanY-10}" width="38" height="18"
-        rx="4" fill="${clr}22" stroke="${clr}" stroke-width="1"/>
-        <text x="${sx - colW/2 + 4 + vi*42 + 19}" y="${vlanY+3}" text-anchor="middle"
-          font-family="monospace" font-size="8.5" font-weight="600" fill="${clr}">V${v.id}</text>`;
-    }).join('');
-    const extraLabel = vstk.length > 4 ? `<text x="${sx}" y="${vlanY+22}" text-anchor="middle"
-      font-size="8" fill="${CLR.muted}">+${vstk.length-4} más</text>` : '';
-    return node(sx, swY, 140, 44, fill, CLR.border, label, sub)
-      + line(sx, swY+22, sx, vlanY-12)
-      + vlabels + extraLabel;
-  }).join('');
+  /* Cabecera de la red */
+  m += `    INET["☁ Internet / WAN${S.wan_nexthop ? '<br/>'+S.wan_nexthop : ''}"]\n`;
+  m += `    FW["🛡 FW-01<br/>${getFWip()}"]\n`;
+  m += `    CORE["⚡ CORE L3<br/>${getCoreIP()}<br/>${S.vlans.length} SVIs"]\n`;
+  m += `    INET --> FW\n`;
+  m += `    FW --> CORE\n\n`;
 
-  // FW — IP de gestión
-  const fwIP  = getFWip();
-  const coreIP = getCoreIP();
+  /* Switches por piso */
+  for (let fl = 1; fl <= S.pisos; fl++) {
+    const isCore = fl === S.core_piso;
+    const swId   = `SW${fl}`;
+    const lbl    = isCore
+      ? `🟦 SW-CORE P${fl}<br/>Core L3 + Access`
+      : `SW-ACC P${fl}<br/>L2 Access`;
+    m += `    ${swId}["${lbl}"]\n`;
+    if (!isCore) {
+      /* Edge desde core a switch — con etiqueta LACP si dual */
+      m += `    CORE ${linkStyle}${dual ? '|"LACP/Po1"|' : ''} ${swId}\n`;
+    }
 
-  // Leyenda de tipos VLAN
-  const legendTypes = Object.entries(TYPE_CLR).map(([t,clr], i) => {
-    const lx = margin + i * 90;
-    return `<rect x="${lx}" y="${svgH-26}" width="10" height="10" rx="2" fill="${clr}"/>
-      <text x="${lx+14}" y="${svgH-17}" font-size="9" fill="${CLR.muted}" font-family="sans-serif">${t}</text>`;
-  }).join('');
+    /* VLANs de este switch como subnodos */
+    const vstk = floorVlans(fl);
+    vstk.forEach(v => {
+      const vId   = `V${v.id}_P${fl}`;
+      const stack = v.network ? `${v.network}/${v.prefix}` : '';
+      m += `    ${vId}(["VLAN ${v.id}<br/>${v.name}<br/>${stack}"])\n`;
+      m += `    ${swId} --- ${vId}\n`;
+    });
+  }
 
-  // Routing note
-  const routeNote = `<text x="${cx}" y="${coreY+36}" text-anchor="middle" font-size="8.5"
-    fill="${CLR.muted}" font-family="monospace">Inter-VLAN via SVIs • Ruta default → FW ${fwIP}</text>`;
+  /* Estilos por tipo de VLAN */
+  m += '\n';
+  const typeColor = {
+    users:'#1a6fc4', admin:'#1a7a4a', servers:'#7c3aed',
+    voip:'#0891b2', wifi:'#7c3aed', mgmt:'#875a00', custom:'#718096',
+  };
+  S.vlans.forEach(v => {
+    for (let fl = 1; fl <= S.pisos; fl++) {
+      const inFloor = v.floor === 'all' || (v.floor === 'core' && fl === S.core_piso);
+      if (!inFloor) continue;
+      const c = typeColor[v.type] || '#718096';
+      m += `    style V${v.id}_P${fl} fill:${c}1a,stroke:${c},color:${c}\n`;
+    }
+  });
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${svgW} ${svgH}" width="${svgW}" height="${svgH}">
-  <defs>
-    <marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-      <path d="M0,0 L0,6 L6,3 z" fill="${CLR.border}"/>
-    </marker>
-  </defs>
-  <!-- fondo -->
-  <rect width="${svgW}" height="${svgH}" fill="#f8fafc" rx="12"/>
+  /* Estilo del Core destacado */
+  m += `    style CORE fill:#e8f0fb,stroke:#0f4d8f,stroke-width:3px\n`;
+  m += `    style FW   fill:#fef2f2,stroke:#c0392b\n`;
+  m += `    style INET fill:#fff7ed,stroke:#f59e0b\n`;
 
-  <!-- título -->
-  <text x="${margin}" y="24" font-family="'DM Mono',monospace" font-size="13" font-weight="600"
-    fill="${CLR.accent}">Topología Lógica — ${escHtml(S.domain)}</text>
-  <text x="${margin}" y="38" font-family="sans-serif" font-size="10" fill="${CLR.muted}">
-    Red base: ${S.net ? S.net.address+'/'+S.net.prefix : '—'} · Dual Stack: ${S.ipv6?'Sí':'No'} · Redundancia: ${S.redundancia}</text>
-
-  <!-- líneas -->
-  ${lines}
-
-  <!-- Internet -->
-  ${node(cx, inetY, 110, 36, '#fff7ed', '#f59e0b', 'INTERNET / WAN', S.wan_nexthop?`Next-hop: ${S.wan_nexthop}`:'', 8)}
-
-  <!-- Firewall -->
-  ${node(cx, fwY, 160, 44, '#fef2f2', '#f87171', 'FIREWALL — FW-01', `IP Gestión: ${fwIP}`, 8)}
-
-  <!-- Core Switch -->
-  ${node(cx, coreY, 200, 44, '#e8f0fb', CLR.accent, 'CORE SWITCH L3', `GW VLANs · ${S.vlans.length} SVIs · ${coreIP}`, 8)}
-  ${routeNote}
-
-  <!-- Access Switches + VLANs -->
-  ${swNodes}
-
-  <!-- Leyenda -->
-  ${legendTypes}
-</svg>`;
+  return m;
 }
+
+/**
+ * Genera XML compatible con draw.io / diagrams.net.
+ * El usuario lo abre en https://app.diagrams.net y puede editarlo
+ * libremente: mover nodos, cambiar estilos, exportar a PNG/PDF, etc.
+ *
+ * Formato: mxGraphModel → root con cells. Cada cell tiene un id único,
+ * un parent ("1" = raíz), un style mxGraph, y geometry (x,y,w,h).
+ */
+function generateDrawioXML() {
+  if (!S.vlans.length) return '';
+
+  const dual = S.redundancia === 'dual';
+  const esc  = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  /* Estilos predefinidos (mxGraph syntax) */
+  const STYLES = {
+    inet:   'rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#f59e0b;fontSize=11;fontStyle=1;',
+    fw:     'rounded=1;whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#c0392b;fontSize=11;fontStyle=1;',
+    core:   'rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f0fb;strokeColor=#0f4d8f;fontSize=12;fontStyle=1;strokeWidth=2;',
+    swCore: 'rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f0fb;strokeColor=#1a6fc4;fontSize=11;strokeWidth=2;',
+    swAcc:  'rounded=1;whiteSpace=wrap;html=1;fillColor=#f7f9fb;strokeColor=#94a3b8;fontSize=11;',
+    edge:   'edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#94a3b8;strokeWidth=1.5;endArrow=none;',
+    edgeDual:'edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1a6fc4;strokeWidth=2.5;endArrow=none;',
+    vlan:   (color) => `rounded=1;whiteSpace=wrap;html=1;fillColor=${color}1a;strokeColor=${color};fontSize=10;`,
+  };
+  const TYPE_CLR = {
+    users:'#1a6fc4', admin:'#1a7a4a', servers:'#7c3aed',
+    voip:'#0891b2', wifi:'#7c3aed', mgmt:'#875a00', custom:'#718096',
+  };
+
+  /* Layout en grid */
+  const colW   = 180,  rowH = 110;
+  const cx     = 600;
+  const inetY  = 40,   fwY = 160, coreY = 280, swY = 440;
+  const vlanY  = 580;
+
+  let cells = '';
+  let id    = 100;
+
+  /* Cabecera vertical */
+  cells += `<mxCell id="inet" value="${esc('☁ Internet / WAN' + (S.wan_nexthop ? '\n' + S.wan_nexthop : ''))}" style="${STYLES.inet}" vertex="1" parent="1"><mxGeometry x="${cx-65}" y="${inetY}" width="130" height="50" as="geometry"/></mxCell>\n`;
+  cells += `<mxCell id="fw"   value="${esc('🛡 FW-01\n' + getFWip())}"           style="${STYLES.fw}"   vertex="1" parent="1"><mxGeometry x="${cx-85}" y="${fwY}"   width="170" height="50" as="geometry"/></mxCell>\n`;
+  cells += `<mxCell id="core" value="${esc('⚡ CORE SWITCH L3\n' + getCoreIP() + '\n' + S.vlans.length + ' SVIs')}" style="${STYLES.core}" vertex="1" parent="1"><mxGeometry x="${cx-110}" y="${coreY}" width="220" height="60" as="geometry"/></mxCell>\n`;
+
+  /* Edges INET → FW → CORE */
+  cells += `<mxCell id="e1" style="${STYLES.edge}" edge="1" parent="1" source="inet" target="fw"><mxGeometry relative="1" as="geometry"/></mxCell>\n`;
+  cells += `<mxCell id="e2" style="${STYLES.edge}" edge="1" parent="1" source="fw"   target="core"><mxGeometry relative="1" as="geometry"/></mxCell>\n`;
+
+  /* Switches por piso (en fila horizontal, centrados sobre el core) */
+  const pisos     = S.pisos;
+  const totalW    = pisos * colW;
+  const startX    = cx - totalW/2 + colW/2;
+
+  const floorVlans = (fl) => S.vlans.filter(v =>
+    v.floor === 'all' || (v.floor === 'core' && fl === S.core_piso)
+  );
+
+  for (let fl = 1; fl <= pisos; fl++) {
+    const sx     = startX + (fl - 1) * colW;
+    const isCore = fl === S.core_piso;
+    const swId   = `sw${fl}`;
+    const lbl    = isCore
+      ? `🟦 SW-CORE (P${fl})\nCore L3 + Access`
+      : `SW-ACC P${fl}\nL2 Access`;
+    const style = isCore ? STYLES.swCore : STYLES.swAcc;
+
+    cells += `<mxCell id="${swId}" value="${esc(lbl)}" style="${style}" vertex="1" parent="1"><mxGeometry x="${sx-70}" y="${swY}" width="140" height="50" as="geometry"/></mxCell>\n`;
+
+    if (!isCore) {
+      const edgeStyle = dual ? STYLES.edgeDual : STYLES.edge;
+      const lblEdge   = dual ? 'LACP/Po1' : '';
+      cells += `<mxCell id="ec${fl}" value="${esc(lblEdge)}" style="${edgeStyle}" edge="1" parent="1" source="core" target="${swId}"><mxGeometry relative="1" as="geometry"/></mxCell>\n`;
+    }
+
+    /* VLANs como nodos pequeños debajo del switch */
+    const vstk = floorVlans(fl);
+    vstk.forEach((v, vi) => {
+      const vx = sx - 70 + (vi % 3) * 50;
+      const vy = vlanY + Math.floor(vi / 3) * 32;
+      const vId = `v${v.id}_p${fl}`;
+      const clr = TYPE_CLR[v.type] || '#718096';
+      cells += `<mxCell id="${vId}" value="${esc('VLAN ' + v.id + '\n' + v.name)}" style="${STYLES.vlan(clr)}" vertex="1" parent="1"><mxGeometry x="${vx}" y="${vy}" width="46" height="28" as="geometry"/></mxCell>\n`;
+      cells += `<mxCell id="ev${id++}" style="${STYLES.edge};dashed=1;" edge="1" parent="1" source="${swId}" target="${vId}"><mxGeometry relative="1" as="geometry"/></mxCell>\n`;
+    });
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="${new Date().toISOString()}" agent="NetPlan Pro v4.0" version="22.0.0">
+  <diagram name="Topología — ${esc(S.domain)}" id="netplan">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+${cells}      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>`;
+}
+
+
+/* ──────────────────────────────────────────────────────────────
+   LAZY LOAD DE LIBRERÍAS EXTERNAS (CDN)
+   Estas se cargan solo cuando el usuario pide ese formato,
+   manteniendo la página inicial liviana y sin npm install.
+   ────────────────────────────────────────────────────────────── */
+
+const _scriptCache = {};
+
+/** Carga un script externo una sola vez y devuelve una promesa. */
+function _loadScript(url) {
+  if (_scriptCache[url]) return _scriptCache[url];
+  _scriptCache[url] = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = url;
+    s.onload  = () => resolve();
+    s.onerror = () => {
+      delete _scriptCache[url];
+      reject(new Error('No se pudo cargar ' + url));
+    };
+    document.head.appendChild(s);
+  });
+  return _scriptCache[url];
+}
+
+
+/* ── EXPORTACIONES ALTERNATIVAS ─────────────────────────────────
+   Cuatro formatos adicionales al HTML completo:
+     · Excel (.xlsx) → tabla VLSM + reservas + métricas en hojas
+     · PDF           → resumen ejecutivo imprimible
+     · Mermaid       → texto pegable en markdown
+     · drawio        → XML editable en draw.io
+   Cada uno genera un archivo descargable independiente.
+   ─────────────────────────────────────────────────────────────── */
+
+/** Helper: dispara descarga de un blob. */
+function _download(blob, filename) {
+  const a = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/** Nombre base para archivos exportados. */
+function _fileName(ext) {
+  const date = new Date().toISOString().slice(0, 10);
+  const dom  = (S.domain || 'plan').replace(/[^a-z0-9._-]/gi, '_');
+  return `netplan_${dom}_${date}.${ext}`;
+}
+
+/* ── EXPORTACIÓN EXCEL (.xlsx) ──────────────────────────────────
+   Usa SheetJS desde CDN. Genera un libro con 4 hojas:
+     1. Resumen      → métricas globales del plan
+     2. VLSM IPv4    → tabla completa de subredes IPv4
+     3. VLSM IPv6    → tabla IPv6 (si está habilitado)
+     4. Reservas IP  → todas las IPs estáticas reservadas
+   ─────────────────────────────────────────────────────────────── */
+
+async function exportPlanExcel() {
+  if (!S.vlans.length) {
+    showToast('Completa el plan antes de exportar', 'error');
+    return;
+  }
+  showToast('Cargando librería Excel…', 'success');
+
+  try {
+    await _loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
+  } catch (e) {
+    showToast('No se pudo cargar la librería. Verifica tu conexión.', 'error');
+    return;
+  }
+  const XLSX = window.XLSX;
+
+  /* Hoja 1: Resumen ejecutivo */
+  const totalReq  = S.vlans.reduce((s,v) => s + v.hosts_required, 0);
+  const totalUsf  = S.vlans.reduce((s,v) => s + v.hosts_useful,   0);
+  const efficiency = Math.round((totalReq / totalUsf) * 100);
+  const swPiso    = Math.ceil(S.hosts_piso / S.puertos);
+
+  const summary = [
+    ['NetPlan Pro v4.0 — Resumen del plan'],
+    ['Generado',            new Date().toLocaleString('es-CO')],
+    ['Dominio interno',     S.domain],
+    [],
+    ['INFRAESTRUCTURA'],
+    ['Pisos',               S.pisos],
+    ['Piso del Core / CPD', S.core_piso],
+    ['Hosts por piso',      S.hosts_piso],
+    ['Puertos por switch',  S.puertos],
+    ['Switches por piso',   swPiso],
+    ['Switches totales',    swPiso * S.pisos],
+    ['Redundancia',         S.redundancia === 'dual' ? 'Dual-Link (LACP)' : 'Single-Link'],
+    ['Vendor',              S.vendor === 'cisco' ? 'Cisco IOS/XE' : 'Huawei VRP'],
+    ['Factor de crecimiento', S.growth_factor + 'x'],
+    [],
+    ['DIRECCIONAMIENTO IPv4'],
+    ['Red base',            (S.net && S.net.address+'/'+S.net.prefix) || '—'],
+    ['Total VLANs',         S.vlans.length],
+    ['Hosts requeridos',    totalReq],
+    ['Hosts útiles asignados', totalUsf],
+    ['Eficiencia global',   efficiency + '%'],
+    [],
+    ['DUAL STACK / IPv6'],
+    ['Habilitado',          S.ipv6 ? 'Sí' : 'No'],
+    ['Prefijo ULA',         S.ula_prefix || '—'],
+    [],
+    ['SERVICIOS'],
+    ['DNS IPv4',            S.dns4],
+    ['DNS IPv6',            S.dns6],
+    ['NTP',                 S.ntp],
+    [],
+    ['WAN'],
+    ['Next-hop',            S.wan_nexthop || '—'],
+    ['Rutas estáticas',     (S.wan_routes || []).join(', ') || '—'],
+  ];
+  const wsSummary = XLSX.utils.aoa_to_sheet(summary);
+  /* Anchos de columna */
+  wsSummary['!cols'] = [{ wch: 32 }, { wch: 40 }];
+
+  /* Hoja 2: VLSM IPv4 */
+  const vlsmHead = ['VLAN ID', 'Nombre', 'Tipo', 'Piso', 'Hosts Req.', 'Hosts Útiles',
+                    'Eficiencia %', 'Red', 'Prefijo', 'Máscara', 'Gateway',
+                    'Broadcast', 'Primera IP', 'Última IP'];
+  const vlsmRows = S.vlans.map(v => [
+    v.id, v.name, v.type, v.floor_label, v.hosts_required, v.hosts_useful,
+    v.efficiency, v.network, '/' + v.prefix, v.mask, v.gateway_v4,
+    v.broadcast, v.first_host, v.last_host,
+  ]);
+  const wsVLSM4 = XLSX.utils.aoa_to_sheet([vlsmHead, ...vlsmRows]);
+  wsVLSM4['!cols'] = [
+    { wch: 8 }, { wch: 18 }, { wch: 10 }, { wch: 10 }, { wch: 11 }, { wch: 12 },
+    { wch: 13 }, { wch: 16 }, { wch: 8 }, { wch: 16 }, { wch: 16 },
+    { wch: 16 }, { wch: 16 }, { wch: 16 },
+  ];
+
+  /* Hoja 3: VLSM IPv6 (solo si está habilitado) */
+  let wsVLSM6 = null;
+  if (S.ipv6) {
+    const head6 = ['VLAN ID', 'Nombre', 'Subred IPv6', 'Gateway IPv6', 'Notas'];
+    const rows6 = S.vlans.map(v => [
+      v.id, v.name, v.subnet_v6 || '—', v.gateway_v6 || '—',
+      v.subnet_v6 ? '/64 Dual-Stack' : '',
+    ]);
+    wsVLSM6 = XLSX.utils.aoa_to_sheet([head6, ...rows6]);
+    wsVLSM6['!cols'] = [{ wch: 8 }, { wch: 18 }, { wch: 32 }, { wch: 32 }, { wch: 18 }];
+  }
+
+  /* Hoja 4: Reservas IP */
+  const resHead = ['VLAN ID', 'VLAN Nombre', 'Alias', 'IPv4', 'IPv6', 'Stack'];
+  const resRows = [];
+  S.vlans.forEach(v => {
+    (v.reserved_ips || []).forEach(r => {
+      resRows.push([v.id, v.name, r.alias, r.ip4 || '—', r.ip6 || '—', r.stack.toUpperCase()]);
+    });
+  });
+  let wsRes = null;
+  if (resRows.length > 0) {
+    wsRes = XLSX.utils.aoa_to_sheet([resHead, ...resRows]);
+    wsRes['!cols'] = [{ wch: 8 }, { wch: 18 }, { wch: 22 }, { wch: 16 }, { wch: 32 }, { wch: 8 }];
+  }
+
+  /* Construir libro */
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumen');
+  XLSX.utils.book_append_sheet(wb, wsVLSM4,   'VLSM IPv4');
+  if (wsVLSM6) XLSX.utils.book_append_sheet(wb, wsVLSM6, 'VLSM IPv6');
+  if (wsRes)   XLSX.utils.book_append_sheet(wb, wsRes,   'Reservas IP');
+
+  XLSX.writeFile(wb, _fileName('xlsx'));
+  showToast('Excel exportado correctamente', 'success');
+}
+
+
+/* ── EXPORTACIÓN PDF ────────────────────────────────────────────
+   Usa jsPDF + jspdf-autotable desde CDN. Genera un documento de
+   2-3 páginas con resumen ejecutivo, tabla VLSM y reservas.
+   ─────────────────────────────────────────────────────────────── */
+
+async function exportPlanPDF() {
+  if (!S.vlans.length) {
+    showToast('Completa el plan antes de exportar', 'error');
+    return;
+  }
+  showToast('Cargando librería PDF…', 'success');
+
+  try {
+    await _loadScript('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js');
+    await _loadScript('https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js');
+  } catch (e) {
+    showToast('No se pudo cargar la librería. Verifica tu conexión.', 'error');
+    return;
+  }
+  const { jsPDF } = window.jspdf || {};
+  if (!jsPDF) { showToast('Error inicializando PDF', 'error'); return; }
+
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const W   = doc.internal.pageSize.getWidth();
+  const M   = 40;                                  // margen
+
+  /* ── Cabecera ── */
+  doc.setFillColor(26, 111, 196);                  // accent
+  doc.rect(0, 0, W, 70, 'F');
+  doc.setTextColor(255);
+  doc.setFont('helvetica', 'bold').setFontSize(20);
+  doc.text('NetPlan Pro v4.0', M, 38);
+  doc.setFont('helvetica', 'normal').setFontSize(11);
+  doc.text(`Plan de Red — ${S.domain}`, M, 56);
+
+  doc.setTextColor(120);
+  doc.setFontSize(9);
+  doc.text(new Date().toLocaleDateString('es-CO', { dateStyle: 'long' }), W - M, 56, { align: 'right' });
+
+  let y = 100;
+  doc.setTextColor(26, 35, 50);
+
+  /* ── Resumen ejecutivo ── */
+  const totalReq  = S.vlans.reduce((s,v) => s + v.hosts_required, 0);
+  const totalUsf  = S.vlans.reduce((s,v) => s + v.hosts_useful,   0);
+  const efficiency = Math.round((totalReq / totalUsf) * 100);
+  const swPiso    = Math.ceil(S.hosts_piso / S.puertos);
+
+  doc.setFont('helvetica', 'bold').setFontSize(13);
+  doc.text('Resumen ejecutivo', M, y);
+  y += 6;
+  doc.setDrawColor(26, 111, 196);
+  doc.setLineWidth(1.5);
+  doc.line(M, y, M + 130, y);
+  y += 18;
+
+  const summaryRows = [
+    ['Pisos / Core',        `${S.pisos} pisos · Core en piso ${S.core_piso}`],
+    ['Hosts por piso',      `${S.hosts_piso} hosts × ${S.puertos} puertos = ${swPiso} switch(es)`],
+    ['Redundancia',         S.redundancia === 'dual' ? 'Dual-Link LACP' : 'Single-Link'],
+    ['Vendor',              S.vendor === 'cisco' ? 'Cisco IOS/XE' : 'Huawei VRP'],
+    ['Red base IPv4',       (S.net && S.net.address+'/'+S.net.prefix) || '—'],
+    ['VLANs / Hosts',       `${S.vlans.length} VLANs · ${totalReq} requeridos · ${totalUsf} útiles`],
+    ['Eficiencia VLSM',     `${efficiency}%`],
+    ['Dual Stack',          S.ipv6 ? `Sí — ULA: ${S.ula_prefix}` : 'No'],
+    ['Servicios',           `DNS: ${S.dns4} · NTP: ${S.ntp}`],
+    ['WAN',                 S.wan_nexthop ? `Next-hop ${S.wan_nexthop}` : '—'],
+  ];
+  doc.autoTable({
+    startY: y,
+    body:   summaryRows,
+    theme:  'plain',
+    styles: { fontSize: 9.5, cellPadding: 4 },
+    columnStyles: {
+      0: { fontStyle: 'bold', cellWidth: 130, textColor: [113, 128, 150] },
+      1: { textColor: [26, 35, 50] },
+    },
+    margin: { left: M, right: M },
+  });
+  y = doc.lastAutoTable.finalY + 24;
+
+  /* ── Tabla VLSM ── */
+  if (y > 720) { doc.addPage(); y = 50; }
+  doc.setFont('helvetica', 'bold').setFontSize(13);
+  doc.text('Tabla VLSM IPv4', M, y);
+  y += 6; doc.line(M, y, M + 130, y); y += 12;
+
+  doc.autoTable({
+    startY: y,
+    head: [['VLAN', 'Nombre', 'Piso', 'Red', 'Máscara', 'Gateway', 'Broadcast', 'Útiles', 'Ef.%']],
+    body: S.vlans.map(v => [
+      v.id, v.name, v.floor_label,
+      v.network + '/' + v.prefix, v.mask, v.gateway_v4,
+      v.broadcast, v.hosts_useful, v.efficiency + '%',
+    ]),
+    theme: 'striped',
+    styles: { fontSize: 8, cellPadding: 3 },
+    headStyles: {
+      fillColor: [26, 111, 196], textColor: 255,
+      fontStyle: 'bold', fontSize: 8.5,
+    },
+    alternateRowStyles: { fillColor: [247, 249, 251] },
+    margin: { left: M, right: M },
+  });
+  y = doc.lastAutoTable.finalY + 24;
+
+  /* ── Tabla VLSM IPv6 (si aplica) ── */
+  if (S.ipv6) {
+    if (y > 700) { doc.addPage(); y = 50; }
+    doc.setFont('helvetica', 'bold').setFontSize(13);
+    doc.text('Tabla VLSM IPv6 (Dual Stack)', M, y);
+    y += 6; doc.line(M, y, M + 200, y); y += 12;
+    doc.autoTable({
+      startY: y,
+      head: [['VLAN', 'Nombre', 'Subred IPv6', 'Gateway IPv6']],
+      body: S.vlans.map(v => [v.id, v.name, v.subnet_v6 || '—', v.gateway_v6 || '—']),
+      theme: 'striped',
+      styles: { fontSize: 8, cellPadding: 3, font: 'courier' },
+      headStyles: { fillColor: [124, 58, 237], textColor: 255, font: 'helvetica', fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [247, 249, 251] },
+      margin: { left: M, right: M },
+    });
+    y = doc.lastAutoTable.finalY + 24;
+  }
+
+  /* ── Reservas IP ── */
+  const reservations = [];
+  S.vlans.forEach(v => (v.reserved_ips || []).forEach(r => {
+    reservations.push([
+      `VLAN ${v.id} — ${v.name}`, r.alias,
+      r.ip4 || '—', r.ip6 || '—', r.stack.toUpperCase(),
+    ]);
+  }));
+
+  if (reservations.length > 0) {
+    if (y > 680) { doc.addPage(); y = 50; }
+    doc.setFont('helvetica', 'bold').setFontSize(13);
+    doc.text('IPs de reserva', M, y);
+    y += 6; doc.line(M, y, M + 130, y); y += 12;
+    doc.autoTable({
+      startY: y,
+      head: [['VLAN', 'Alias', 'IPv4', 'IPv6', 'Stack']],
+      body: reservations,
+      theme: 'striped',
+      styles: { fontSize: 8, cellPadding: 3 },
+      headStyles: { fillColor: [26, 122, 74], textColor: 255, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [247, 249, 251] },
+      margin: { left: M, right: M },
+    });
+  }
+
+  /* ── Pie de página en cada página ── */
+  const pageCount = doc.getNumberOfPages();
+  for (let p = 1; p <= pageCount; p++) {
+    doc.setPage(p);
+    doc.setFont('helvetica', 'normal').setFontSize(8);
+    doc.setTextColor(140);
+    doc.text(`NetPlan Pro v4.0  ·  ${S.domain}`, M, 825);
+    doc.text(`Página ${p} / ${pageCount}`, W - M, 825, { align: 'right' });
+  }
+
+  doc.save(_fileName('pdf'));
+  showToast('PDF exportado correctamente', 'success');
+}
+
+
+/* ── EXPORTACIÓN MERMAID Y DRAWIO ────────────────────────────── */
+
+function exportPlanMermaid() {
+  if (!S.vlans.length) { showToast('Completa el plan antes de exportar', 'error'); return; }
+  const mmd = generateMermaid();
+  _download(new Blob([mmd], { type: 'text/plain' }), _fileName('mmd'));
+  showToast('Mermaid exportado — péguelo en GitHub o Notion', 'success');
+}
+
+function exportPlanDrawio() {
+  if (!S.vlans.length) { showToast('Completa el plan antes de exportar', 'error'); return; }
+  const xml = generateDrawioXML();
+  _download(new Blob([xml], { type: 'application/xml' }), _fileName('drawio'));
+  showToast('Drawio exportado — abrirlo en https://app.diagrams.net', 'success');
+}
+
 
 /* ── EXPORTAR PLAN COMPLETO ──────────────────────────────────────
    Un único HTML autocontenido con:
@@ -2386,24 +3107,22 @@ function resetApp() {
     ntp: 'pool.ntp.org', domain: 'corp.local', ipv6: true,
     wan_nexthop: '', wan_routes: [],
     vlan_defs: [], vlans: [], ula_prefix: '',
-    step: 0, export_vendor: 'cisco', vlan_edit_id: null,
-    reserve_expanded: {},
+    step: 0, export_vendor: 'cisco', rollback_vendor: 'cisco',
+    vlan_edit_id: null, reserve_expanded: {},
+    cloud_plan_id: null,
   });
 
-  /* Resetear selects */
-  document.getElementById('sel-pisos').value   = '3';
+  /* Resetear selects e inputs numéricos del paso 1 */
+  document.getElementById('inp-pisos').value   = '3';
+  document.getElementById('inp-core').value    = '1';
+  document.getElementById('inp-core').max      = '3';
+  const hintCore = document.getElementById('hint-core');
+  if (hintCore) hintCore.textContent = 'Rango: 1 – 3 (debe ser ≤ número de pisos)';
+  const errCore = document.getElementById('error-core');
+  if (errCore)  errCore.textContent  = 'Debe estar entre 1 y 3';
   document.getElementById('sel-puertos').value = '48';
   const selGrowth = document.getElementById('sel-growth');
   if (selGrowth) selGrowth.value = '2';
-  /* Regenerar opciones de sel-core para 3 pisos */
-  const selCore = document.getElementById('sel-core');
-  selCore.innerHTML = '';
-  for (let i = 1; i <= 3; i++) {
-    const opt = document.createElement('option');
-    opt.value = i; opt.textContent = i === 1 ? 'Piso 1 (recomendado)' : `Piso ${i}`;
-    selCore.appendChild(opt);
-  }
-  selCore.value = '1';
 
   /* Limpiar inputs de texto */
   document.getElementById('inp-hosts').value   = '';
@@ -2462,18 +3181,676 @@ function resetApp() {
   if (swBox) { swBox.classList.add('ok'); swBox.classList.remove('warn'); }
 
   activateStep(0);
+  /* Limpiar autoguardado al reiniciar el plan */
+  try { localStorage.removeItem(STORAGE_KEY); } catch(e) {}
+  document.getElementById('recovery-banner')?.classList.add('hidden');
   showToast('Plan reiniciado. Comienza desde el paso 1.', 'success');
 }
 
 
 /* ══════════════════════════════════════════════════════════════
-   17. INICIALIZACIÓN
+   17. PERSISTENCIA — JSON, IMPORT/EXPORT, AUTOGUARDADO
+   ══════════════════════════════════════════════════════════════
+   Diseño:
+   ─ El JSON solo guarda decisiones del usuario (no valores derivados
+     como network/mask/gateway). Estos se recalculan al cargar.
+   ─ El esquema lleva versión: futuras migraciones via migratePlan().
+   ─ La misma estructura sirve para localStorage y para Firebase
+     más adelante: una sola fuente de verdad.
+   ══════════════════════════════════════════════════════════════ */
+
+const PLAN_SCHEMA_VERSION = 'netplan.v1';
+const STORAGE_KEY         = 'netplan_pro_autosave';
+const AUTOSAVE_DEBOUNCE   = 800;       // ms — evita saturar localStorage
+
+let _autosaveTimer = null;
+
+/**
+ * Construye el objeto JSON serializable del plan actual.
+ * Solo incluye lo que el usuario decidió; lo derivado se recalcula.
+ */
+function buildPlanJSON() {
+  const now = new Date().toISOString();
+  return {
+    schema: PLAN_SCHEMA_VERSION,
+    metadata: {
+      name:        S.domain || 'plan',
+      description: '',
+      author:      '',
+      createdAt:   now,
+      updatedAt:   now,
+    },
+    infrastructure: {
+      pisos:         S.pisos,
+      core_piso:     S.core_piso,
+      hosts_piso:    S.hosts_piso,
+      puertos:       S.puertos,
+      redundancia:   S.redundancia,
+      vendor:        S.vendor,
+      growth_factor: S.growth_factor,
+    },
+    ipv4: {
+      override: S.override || '',
+    },
+    services: {
+      dns4:        S.dns4,
+      dns6:        S.dns6,
+      ntp:         S.ntp,
+      domain:      S.domain,
+      ipv6:        S.ipv6,
+      wan_nexthop: S.wan_nexthop || '',
+      wan_routes:  Array.isArray(S.wan_routes) ? S.wan_routes : [],
+    },
+    vlans: (S.vlan_defs || []).map(v => ({
+      id:             v.id,
+      name:           v.name,
+      type:           v.type,
+      badge:          v.badge,
+      floor:          v.floor,
+      hosts_required: v.hosts_required,
+      reserved_ips:   (v.reserved_ips || []).map(r => ({
+        id:    r.id,
+        alias: r.alias,
+        ip4:   r.ip4 || null,
+        ip6:   r.ip6 || null,
+        stack: r.stack,
+      })),
+    })),
+  };
+}
+
+/**
+ * Valida y migra un objeto plan recibido (JSON parseado).
+ * Devuelve { ok: bool, plan?: object, error?: string }.
+ *
+ * Reglas de validación: idénticas a las del UI (rango pisos 1-50,
+ * core ≤ pisos, hosts 1-500, etc.). Mensajes en español, claros.
+ */
+function validateAndMigratePlan(data) {
+  if (!data || typeof data !== 'object') {
+    return { ok: false, error: 'JSON malformado o vacío' };
+  }
+  if (!data.schema) {
+    return { ok: false, error: 'Falta el campo "schema" — ¿es un plan NetPlan?' };
+  }
+
+  /* Migración (placeholder para futuras versiones) */
+  if (data.schema !== PLAN_SCHEMA_VERSION) {
+    return { ok: false, error: `Versión "${data.schema}" no soportada. Esperado: ${PLAN_SCHEMA_VERSION}` };
+  }
+
+  /* Secciones requeridas */
+  for (const k of ['infrastructure', 'services', 'vlans']) {
+    if (!data[k]) return { ok: false, error: `Falta sección obligatoria "${k}"` };
+  }
+
+  /* infrastructure */
+  const i = data.infrastructure;
+  if (!Number.isInteger(i.pisos) || i.pisos < 1 || i.pisos > 50)
+    return { ok: false, error: 'Pisos debe ser entero entre 1 y 50' };
+  if (!Number.isInteger(i.core_piso) || i.core_piso < 1 || i.core_piso > i.pisos)
+    return { ok: false, error: `Piso del core debe ser entero entre 1 y ${i.pisos}` };
+  if (!Number.isInteger(i.hosts_piso) || i.hosts_piso < 1 || i.hosts_piso > 500)
+    return { ok: false, error: 'Hosts por piso debe ser entero entre 1 y 500' };
+  if (![24, 48].includes(i.puertos))
+    return { ok: false, error: 'Puertos por switch debe ser 24 o 48' };
+  if (!['single', 'dual'].includes(i.redundancia))
+    return { ok: false, error: 'Redundancia debe ser "single" o "dual"' };
+  if (!['cisco', 'huawei'].includes(i.vendor))
+    return { ok: false, error: 'Vendor debe ser "cisco" o "huawei"' };
+  if (![1.5, 2, 3].includes(i.growth_factor))
+    return { ok: false, error: 'Factor de crecimiento debe ser 1.5, 2 o 3' };
+
+  /* services */
+  const s = data.services;
+  if (!isValidIPv4(s.dns4 || ''))            return { ok: false, error: 'DNS IPv4 inválido' };
+  if (!isValidIPv6(s.dns6 || ''))            return { ok: false, error: 'DNS IPv6 inválido' };
+  if (!isValidIPv4orHostname(s.ntp || ''))   return { ok: false, error: 'NTP inválido (IPv4 u hostname)' };
+  if (!isValidDomain(s.domain || ''))        return { ok: false, error: 'Dominio interno inválido' };
+  if (typeof s.ipv6 !== 'boolean')           return { ok: false, error: 'Campo services.ipv6 debe ser booleano' };
+  if (s.wan_nexthop && !isValidIPv4(s.wan_nexthop))
+    return { ok: false, error: 'WAN next-hop inválido' };
+  if (!Array.isArray(s.wan_routes))          return { ok: false, error: 'wan_routes debe ser array' };
+  for (const r of s.wan_routes) {
+    if (!parseCIDR(r)) return { ok: false, error: `Ruta WAN inválida: "${r}"` };
+  }
+
+  /* ipv4.override (opcional) */
+  const ov = data.ipv4?.override || '';
+  if (ov && !parseCIDR(ov)) return { ok: false, error: `Override CIDR inválido: "${ov}"` };
+
+  /* vlans */
+  if (!Array.isArray(data.vlans) || data.vlans.length === 0)
+    return { ok: false, error: 'Debe haber al menos 1 VLAN' };
+  const seen = new Set();
+  for (const v of data.vlans) {
+    if (!Number.isInteger(v.id) || v.id < 1 || v.id > 4094)
+      return { ok: false, error: `VLAN ID inválido: ${v.id}` };
+    if (seen.has(v.id))
+      return { ok: false, error: `VLAN ID duplicado: ${v.id}` };
+    seen.add(v.id);
+    if (typeof v.name !== 'string' || !v.name.trim())
+      return { ok: false, error: `VLAN ${v.id}: nombre inválido` };
+    if (!Number.isInteger(v.hosts_required) || v.hosts_required < 2 || v.hosts_required > 500)
+      return { ok: false, error: `VLAN ${v.id}: hosts requeridos debe estar entre 2 y 500` };
+    if (!['all', 'core'].includes(v.floor))
+      return { ok: false, error: `VLAN ${v.id}: floor debe ser "all" o "core"` };
+  }
+
+  return { ok: true, plan: data };
+}
+
+/**
+ * Aplica un plan validado al estado S y al DOM.
+ * Recalcula análisis IPv4 y VLSM, y navega al paso de Resumen.
+ */
+function applyPlan(plan) {
+  /* infrastructure */
+  S.pisos         = plan.infrastructure.pisos;
+  S.core_piso     = plan.infrastructure.core_piso;
+  S.hosts_piso    = plan.infrastructure.hosts_piso;
+  S.puertos       = plan.infrastructure.puertos;
+  S.redundancia   = plan.infrastructure.redundancia;
+  S.vendor        = plan.infrastructure.vendor;
+  S.growth_factor = plan.infrastructure.growth_factor;
+
+  /* ipv4 */
+  S.override = plan.ipv4?.override || '';
+
+  /* services */
+  S.dns4        = plan.services.dns4;
+  S.dns6        = plan.services.dns6;
+  S.ntp         = plan.services.ntp;
+  S.domain      = plan.services.domain;
+  S.ipv6        = !!plan.services.ipv6;
+  S.wan_nexthop = plan.services.wan_nexthop || '';
+  S.wan_routes  = Array.isArray(plan.services.wan_routes) ? plan.services.wan_routes : [];
+
+  /* vlans */
+  S.vlan_defs = plan.vlans.map(v => ({
+    id:             v.id,
+    name:           v.name,
+    type:           v.type,
+    badge:          v.badge || TYPE_BADGE[v.type] || 'blue',
+    floor:          v.floor,
+    hosts_required: v.hosts_required,
+    reserved_ips:   Array.isArray(v.reserved_ips) ? v.reserved_ips.slice() : [],
+  }));
+
+  /* Sincronizar DOM */
+  syncDOMFromState();
+
+  /* Recalcular todo */
+  runAnalysis();
+  buildVLANPlan();
+  renderVLANCards();
+  updateVlansCount();
+  renderSummary();
+
+  /* Ir al paso de Resumen para que el usuario vea el plan completo */
+  activateStep(4);
+}
+
+/**
+ * Sincroniza los inputs del DOM con los valores actuales de S.
+ * Se usa después de cargar un plan o restaurar autoguardado.
+ */
+function syncDOMFromState() {
+  /* Paso 1 — infraestructura */
+  const inpPisos = document.getElementById('inp-pisos');
+  const inpCore  = document.getElementById('inp-core');
+  if (inpPisos) inpPisos.value = S.pisos;
+  if (inpCore) {
+    inpCore.max   = S.pisos;
+    inpCore.value = S.core_piso;
+  }
+  const hint = document.getElementById('hint-core');
+  if (hint) hint.textContent = `Rango: 1 – ${S.pisos} (debe ser ≤ número de pisos)`;
+  const err  = document.getElementById('error-core');
+  if (err)  err.textContent  = `Debe estar entre 1 y ${S.pisos}`;
+
+  const inpHosts = document.getElementById('inp-hosts');
+  if (inpHosts) inpHosts.value = S.hosts_piso ?? '';
+
+  document.getElementById('sel-puertos').value = String(S.puertos);
+  const selGrowth = document.getElementById('sel-growth');
+  if (selGrowth) selGrowth.value = String(S.growth_factor);
+
+  /* Toggles */
+  document.querySelectorAll('#tg-redund .toggle-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.value === S.redundancia)
+  );
+  document.querySelectorAll('#tg-vendor .vendor-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.value === S.vendor)
+  );
+
+  /* Paso 2 — override CIDR */
+  const inpOver = document.getElementById('inp-override');
+  if (inpOver) inpOver.value = S.override || '';
+
+  /* Paso 3 — servicios */
+  document.getElementById('inp-dns4').value   = S.dns4;
+  document.getElementById('inp-dns6').value   = S.dns6;
+  document.getElementById('inp-ntp').value    = S.ntp;
+  document.getElementById('inp-domain').value = S.domain;
+  document.getElementById('chk-ipv6').checked = S.ipv6;
+  document.getElementById('ipv6-info')?.classList.toggle('hidden', !S.ipv6);
+
+  /* Paso 3 — WAN */
+  const wn = document.getElementById('inp-wan-nexthop');
+  if (wn) wn.value = S.wan_nexthop || '';
+  const wr = document.getElementById('inp-wan-routes');
+  if (wr) wr.value = (S.wan_routes || []).join('\n');
+
+  /* Limpiar estados de validación previos */
+  document.querySelectorAll('.field.invalid').forEach(f => f.classList.remove('invalid'));
+
+  /* Panel lateral */
+  setText('st-vendor',  S.vendor === 'cisco' ? 'Cisco' : 'Huawei');
+  setText('st-redund',  S.redundancia === 'single' ? 'Single-Link' : 'Dual-Link (LACP)');
+  setText('st-hpiso',   S.hosts_piso ?? '—');
+  setText('st-ports',   S.puertos);
+  setText('st-sw',      S.hosts_piso ? Math.ceil(S.hosts_piso / S.puertos) : '—');
+}
+
+/**
+ * Descarga el plan actual como archivo JSON.
+ * Solo se permite si hay datos mínimos (paso 1 completo).
+ */
+function exportPlanJSON() {
+  if (!S.pisos || !S.core_piso || !S.hosts_piso) {
+    showToast('Completa al menos el paso 1 antes de exportar', 'error');
+    return;
+  }
+  const plan = buildPlanJSON();
+  const json = JSON.stringify(plan, null, 2);
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+  a.download = `netplan_${S.domain}_${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('Plan JSON exportado correctamente', 'success');
+}
+
+/** Dispara el diálogo de selección de archivo. */
+function triggerImportJSON() {
+  const fi = document.getElementById('file-import-json');
+  if (fi) { fi.value = ''; fi.click(); }
+}
+
+/** Maneja el archivo seleccionado para importar. */
+function onImportFileSelected(evt) {
+  const file = evt.target.files?.[0];
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.json')) {
+    showToast('El archivo debe tener extensión .json', 'error');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    let parsed;
+    try {
+      parsed = JSON.parse(e.target.result);
+    } catch (err) {
+      showToast('JSON inválido: ' + err.message, 'error');
+      return;
+    }
+    const result = validateAndMigratePlan(parsed);
+    if (!result.ok) {
+      showToast('Error al cargar: ' + result.error, 'error');
+      return;
+    }
+    applyPlan(result.plan);
+    /* JSON importado desde archivo no está vinculado a ningún plan en nube */
+    S.cloud_plan_id = null;
+    showToast('Plan cargado correctamente', 'success');
+  };
+  reader.onerror = () => showToast('No se pudo leer el archivo', 'error');
+  reader.readAsText(file);
+}
+
+/* ── AUTOGUARDADO EN localStorage ────────────────────────────── */
+
+/**
+ * Guarda el plan actual en localStorage con debounce.
+ * Solo guarda si hay datos mínimos (evita guardar plantilla vacía).
+ */
+function autosave() {
+  clearTimeout(_autosaveTimer);
+  _autosaveTimer = setTimeout(() => {
+    try {
+      /* No guardar hasta que el usuario haya tocado algo significativo */
+      if (!S.hosts_piso) return;
+      const plan = buildPlanJSON();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(plan));
+    } catch (e) {
+      /* Cuota llena, modo privado, etc. — silencioso */
+      console.warn('Autoguardado no disponible:', e.message);
+    }
+  }, AUTOSAVE_DEBOUNCE);
+}
+
+/**
+ * Comprueba si hay un autoguardado al cargar la app.
+ * Si lo hay, muestra el banner de recuperación.
+ */
+function checkAutosaveOnLoad() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const plan = JSON.parse(raw);
+    if (!plan || plan.schema !== PLAN_SCHEMA_VERSION) return;
+    if (!plan.infrastructure?.hosts_piso) return;
+
+    /* Mostrar banner con metadata */
+    const banner  = document.getElementById('recovery-banner');
+    const metaEl  = document.getElementById('recovery-meta');
+    if (!banner) return;
+
+    const updated = plan.metadata?.updatedAt
+      ? new Date(plan.metadata.updatedAt).toLocaleString('es-CO',
+          { dateStyle: 'medium', timeStyle: 'short' })
+      : 'fecha desconocida';
+    const vlanCnt = (plan.vlans || []).length;
+    if (metaEl) metaEl.textContent =
+      `${plan.metadata?.name || 'plan'} · ${vlanCnt} VLANs · guardado ${updated}`;
+
+    banner.classList.remove('hidden');
+  } catch (e) {
+    console.warn('No se pudo leer autoguardado:', e.message);
+  }
+}
+
+/** Restaura el autoguardado y lo aplica al plan actual. */
+function restoreAutosave() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      showToast('No hay autoguardado disponible', 'error');
+      return;
+    }
+    const plan   = JSON.parse(raw);
+    const result = validateAndMigratePlan(plan);
+    if (!result.ok) {
+      showToast('Autoguardado corrupto: ' + result.error, 'error');
+      return;
+    }
+    applyPlan(result.plan);
+    /* El autoguardado local no rastrea el ID de nube; al restaurar
+       lo desvinculamos para evitar sobreescribir el plan equivocado */
+    S.cloud_plan_id = null;
+    document.getElementById('recovery-banner')?.classList.add('hidden');
+    showToast('Plan restaurado desde autoguardado', 'success');
+  } catch (e) {
+    showToast('Error al restaurar: ' + e.message, 'error');
+  }
+}
+
+/** Descarta el autoguardado actual. */
+function discardAutosave() {
+  try { localStorage.removeItem(STORAGE_KEY); } catch(e) {}
+  document.getElementById('recovery-banner')?.classList.add('hidden');
+  showToast('Autoguardado descartado', 'success');
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   18. NUBE — UI Y HANDLERS DE FIREBASE
+   ══════════════════════════════════════════════════════════════
+   Toda la lógica Firebase vive en firebase-cloud.js (módulo ES6).
+   Aquí solo se invoca la API expuesta en window.NetPlanCloud.
+   Si la nube no está configurada, los botones .cloud-only quedan
+   ocultos por CSS y estos handlers nunca se llaman.
+   ══════════════════════════════════════════════════════════════ */
+
+/**
+ * Espera el evento que dispara firebase-cloud.js cuando termina de
+ * inicializar. Si la nube quedó disponible, activa la UI cloud
+ * (clase body.cloud-ready) y suscribe el cambio de auth.
+ */
+window.addEventListener('netplan-cloud-ready', (e) => {
+  if (!e.detail?.available) return;
+  document.body.classList.add('cloud-ready');
+  if (window.NetPlanCloud) {
+    window.NetPlanCloud.onAuthStateChanged(updateUserMenuUI);
+  }
+});
+
+/**
+ * Actualiza el menú de usuario según el estado de auth.
+ * Para usuarios anónimos: avatar "?" y botón "Iniciar sesión".
+ * Para usuarios con Google: avatar con inicial, email visible y botón "Cerrar sesión".
+ */
+function updateUserMenuUI(user) {
+  if (!user) return;
+  const avatar    = document.getElementById('user-avatar');
+  const label     = document.getElementById('user-label');
+  const info      = document.getElementById('user-menu-info');
+  const btnIn     = document.getElementById('btn-signin-google');
+  const btnOut    = document.getElementById('btn-signout');
+
+  if (user.isAnonymous) {
+    if (avatar) avatar.textContent = '?';
+    if (label)  label.textContent  = 'Anónimo';
+    if (info)   info.textContent   = 'Sesión anónima — los planes solo son accesibles desde este navegador';
+    btnIn?.classList.remove('hidden');
+    btnOut?.classList.add('hidden');
+  } else {
+    const display = user.displayName || user.email || 'Usuario';
+    const initial = (display[0] || 'U').toUpperCase();
+    if (avatar) avatar.textContent = initial;
+    if (label)  label.textContent  = display.split(' ')[0];
+    if (info)   info.textContent   = user.email || display;
+    btnIn?.classList.add('hidden');
+    btnOut?.classList.remove('hidden');
+  }
+}
+
+/** Abre/cierra el dropdown del menú de usuario. */
+function toggleUserMenu(evt) {
+  evt?.stopPropagation();
+  document.getElementById('user-menu-dropdown')?.classList.toggle('hidden');
+}
+
+/* Cerrar dropdown al hacer click afuera */
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('user-menu');
+  const dd   = document.getElementById('user-menu-dropdown');
+  if (menu && dd && !menu.contains(e.target) && !dd.classList.contains('hidden')) {
+    dd.classList.add('hidden');
+  }
+});
+
+/** Inicia sesión con Google. */
+async function cloudSignInWithGoogle() {
+  if (!window.NetPlanCloud?.isAvailable()) return;
+  document.getElementById('user-menu-dropdown')?.classList.add('hidden');
+  try {
+    await window.NetPlanCloud.signInWithGoogle();
+    showToast('Sesión iniciada con Google', 'success');
+  } catch (e) {
+    if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
+      return; /* usuario canceló, sin toast */
+    }
+    showToast('No se pudo iniciar sesión: ' + (e.message || e.code), 'error');
+  }
+}
+
+/** Cierra sesión y vuelve a anónimo. */
+async function cloudSignOut() {
+  if (!window.NetPlanCloud?.isAvailable()) return;
+  if (!confirm('¿Cerrar sesión? Tus planes en la nube quedarán inaccesibles hasta que vuelvas a iniciar sesión con la misma cuenta.')) {
+    return;
+  }
+  document.getElementById('user-menu-dropdown')?.classList.add('hidden');
+  try {
+    await window.NetPlanCloud.signOut();
+    S.cloud_plan_id = null;
+    showToast('Sesión cerrada', 'success');
+  } catch (e) {
+    showToast('Error al cerrar sesión: ' + e.message, 'error');
+  }
+}
+
+/** Abre el modal de planes en la nube y refresca la lista. */
+function openCloudPlansModal() {
+  if (!window.NetPlanCloud?.isAvailable()) {
+    showToast('Nube no configurada', 'error');
+    return;
+  }
+  document.getElementById('modal-cloud-plans')?.classList.remove('hidden');
+  /* Pre-llenar el nombre con el dominio del plan actual si está vacío */
+  const inp = document.getElementById('inp-plan-name');
+  if (inp && !inp.value && S.domain) inp.value = S.domain;
+  refreshCloudPlansList();
+}
+
+/** Cierra el modal de planes en la nube. */
+function closeCloudPlansModal() {
+  document.getElementById('modal-cloud-plans')?.classList.add('hidden');
+}
+
+/**
+ * Guarda el plan actual en la nube.
+ * Si S.cloud_plan_id existe, sobreescribe ese plan; de lo contrario crea uno nuevo.
+ */
+async function cloudSaveCurrentPlan() {
+  if (!window.NetPlanCloud?.isAvailable()) return;
+
+  /* Validación mínima — coherente con exportPlanJSON */
+  if (!S.pisos || !S.core_piso || !S.hosts_piso) {
+    showToast('Completa al menos el paso 1 antes de guardar', 'error');
+    return;
+  }
+
+  const name = document.getElementById('inp-plan-name')?.value?.trim() || S.domain || 'Plan sin título';
+  const planJson = buildPlanJSON();
+
+  try {
+    const id = await window.NetPlanCloud.savePlan(planJson, name, S.cloud_plan_id);
+    S.cloud_plan_id = id;
+    showToast(`Plan "${name}" guardado en la nube`, 'success');
+    refreshCloudPlansList();
+  } catch (e) {
+    showToast('Error al guardar: ' + e.message, 'error');
+  }
+}
+
+/**
+ * Refresca la lista de planes en el modal.
+ * Renderiza filas con nombre, metadata y acciones (cargar / renombrar / eliminar).
+ */
+async function refreshCloudPlansList() {
+  if (!window.NetPlanCloud?.isAvailable()) return;
+  const list = document.getElementById('cloud-plans-list');
+  if (!list) return;
+
+  list.innerHTML = '<p class="placeholder-msg">Cargando planes…</p>';
+
+  try {
+    const plans = await window.NetPlanCloud.listPlans();
+    if (plans.length === 0) {
+      list.innerHTML = '<p class="placeholder-msg">No tienes planes guardados todavía. Guarda el plan actual para empezar.</p>';
+      return;
+    }
+
+    list.innerHTML = '';
+    for (const p of plans) {
+      const updated = p.updatedAt
+        ? new Date(p.updatedAt).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' })
+        : 'sin fecha';
+      const isCurrent = p.id === S.cloud_plan_id;
+
+      const row = document.createElement('div');
+      row.className = 'cloud-plan-row';
+      row.innerHTML = `
+        <div class="cloud-plan-info">
+          <span class="cloud-plan-name">${escapeHTML(p.name)}${isCurrent ? ' · <em style="color:var(--accent);font-style:normal">actual</em>' : ''}</span>
+          <span class="cloud-plan-meta">${p.vlanCount} VLAN${p.vlanCount !== 1 ? 's' : ''} · ${escapeHTML(p.domain || '—')} · ${updated}</span>
+        </div>
+        <div class="cloud-plan-actions">
+          <button class="btn-cloud-action" title="Cargar este plan" data-act="load" data-id="${p.id}">↓</button>
+          <button class="btn-cloud-action" title="Renombrar"        data-act="rename" data-id="${p.id}" data-name="${escapeHTML(p.name)}">✎</button>
+          <button class="btn-cloud-action btn-cloud-action-danger" title="Eliminar" data-act="delete" data-id="${p.id}" data-name="${escapeHTML(p.name)}">✕</button>
+        </div>
+      `;
+      list.appendChild(row);
+    }
+
+    /* Event delegation para los botones de acción */
+    list.querySelectorAll('.btn-cloud-action').forEach(btn => {
+      btn.addEventListener('click', () => onCloudPlanAction(btn));
+    });
+  } catch (e) {
+    list.innerHTML = `<p class="placeholder-msg" style="color:var(--error)">Error: ${escapeHTML(e.message)}</p>`;
+  }
+}
+
+/** Maneja click en los botones de cada plan listado. */
+async function onCloudPlanAction(btn) {
+  const id   = btn.dataset.id;
+  const act  = btn.dataset.act;
+  const name = btn.dataset.name || '';
+
+  if (act === 'load') {
+    try {
+      const plan = await window.NetPlanCloud.loadPlan(id);
+      const result = validateAndMigratePlan(plan);
+      if (!result.ok) {
+        showToast('Plan corrupto: ' + result.error, 'error');
+        return;
+      }
+      applyPlan(result.plan);
+      S.cloud_plan_id = id;
+      closeCloudPlansModal();
+      showToast('Plan cargado desde la nube', 'success');
+    } catch (e) {
+      showToast('Error al cargar: ' + e.message, 'error');
+    }
+  }
+  else if (act === 'rename') {
+    const newName = prompt('Nuevo nombre del plan:', name);
+    if (newName === null) return;          // canceló
+    const trimmed = newName.trim();
+    if (!trimmed) { showToast('El nombre no puede estar vacío', 'error'); return; }
+    try {
+      await window.NetPlanCloud.renamePlan(id, trimmed);
+      showToast('Plan renombrado', 'success');
+      refreshCloudPlansList();
+    } catch (e) {
+      showToast('Error al renombrar: ' + e.message, 'error');
+    }
+  }
+  else if (act === 'delete') {
+    if (!confirm(`¿Eliminar "${name}" permanentemente? Esta acción no se puede deshacer.`)) return;
+    try {
+      await window.NetPlanCloud.deletePlan(id);
+      if (S.cloud_plan_id === id) S.cloud_plan_id = null;
+      showToast('Plan eliminado', 'success');
+      refreshCloudPlansList();
+    } catch (e) {
+      showToast('Error al eliminar: ' + e.message, 'error');
+    }
+  }
+}
+
+/** Escapa texto para inserción segura como HTML. */
+function escapeHTML(s) {
+  return String(s ?? '').replace(/[&<>"']/g,
+    c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   19. INICIALIZACIÓN
    ══════════════════════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
   /*
    * Al cargar, S.pisos = 3 y S.core_piso = 1 (inicializados en S),
-   * que coinciden con los valores por defecto de sel-pisos y sel-core.
+   * que coinciden con los valores por defecto de inp-pisos e inp-core.
    * El botón Siguiente arranca deshabilitado hasta que inp-hosts sea válido.
    */
   activateStep(0);
+  /* Verificar si hay un plan auto-guardado para ofrecer recuperación */
+  checkAutosaveOnLoad();
 });

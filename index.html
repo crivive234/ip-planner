@@ -27,7 +27,52 @@
     <p class="header-subtitle">
       Planificación automática · IPv4 VLSM + IPv6 Dual-Stack · Cisco &amp; Huawei
     </p>
+    <div class="header-actions">
+      <button class="btn-header cloud-only" type="button" onclick="openCloudPlansModal()" title="Mis planes en la nube">
+        <span class="btn-header-icon">☁</span> Mis planes
+      </button>
+
+      <!-- Menú de usuario (visible solo si Firebase está configurado) -->
+      <div class="user-menu cloud-only" id="user-menu">
+        <button class="btn-header user-menu-btn" type="button" onclick="toggleUserMenu(event)" title="Cuenta">
+          <span class="user-avatar" id="user-avatar">?</span>
+          <span class="user-label" id="user-label">Anónimo</span>
+          <span class="user-caret">▾</span>
+        </button>
+        <div class="user-menu-dropdown hidden" id="user-menu-dropdown">
+          <div class="user-menu-info" id="user-menu-info">Sesión anónima</div>
+          <hr class="user-menu-divider">
+          <button class="user-menu-item" type="button" onclick="cloudSignInWithGoogle()" id="btn-signin-google">
+            <span class="user-menu-icon">⊕</span> Iniciar sesión con Google
+          </button>
+          <button class="user-menu-item user-menu-danger hidden" type="button" onclick="cloudSignOut()" id="btn-signout">
+            <span class="user-menu-icon">⊖</span> Cerrar sesión
+          </button>
+        </div>
+      </div>
+
+      <button class="btn-header" type="button" onclick="triggerImportJSON()" title="Cargar plan desde archivo JSON">
+        <span class="btn-header-icon">↑</span> Cargar plan
+      </button>
+      <input type="file" id="file-import-json" accept=".json,application/json"
+             style="display:none" onchange="onImportFileSelected(event)" />
+    </div>
   </header>
+
+  <!-- BANNER DE RECUPERACIÓN DE AUTOGUARDADO -->
+  <div class="recovery-banner hidden" id="recovery-banner" role="status">
+    <div class="recovery-content">
+      <span class="recovery-icon">◴</span>
+      <div class="recovery-text">
+        <strong>Plan auto-guardado disponible</strong>
+        <span id="recovery-meta">—</span>
+      </div>
+    </div>
+    <div class="recovery-actions">
+      <button class="btn-recovery btn-recovery-primary" onclick="restoreAutosave()">Restaurar</button>
+      <button class="btn-recovery btn-recovery-secondary" onclick="discardAutosave()">Descartar</button>
+    </div>
+  </div>
 
   <!-- WIZARD STEPS NAV -->
   <nav class="steps-nav" role="navigation" aria-label="Pasos del asistente">
@@ -68,25 +113,23 @@
         <div class="field-group">
           <span class="group-label">Dimensiones del edificio</span>
           <div class="grid-2">
-            <div class="field">
-              <label for="sel-pisos">Número de pisos</label>
-              <select id="sel-pisos" onchange="onPisosChange()">
-                <option value="1">1 piso</option>
-                <option value="2">2 pisos</option>
-                <option value="3" selected>3 pisos</option>
-                <option value="4">4 pisos</option>
-                <option value="5">5 pisos</option>
-              </select>
-              <span class="field-hint">Máximo 5 pisos para redes medianas</span>
+            <div class="field" id="field-pisos">
+              <label for="inp-pisos">Número de pisos</label>
+              <input type="number" id="inp-pisos" min="1" max="50" value="3"
+                     placeholder="Ej: 3"
+                     onkeydown="blockInvalidNumKeys(event)"
+                     oninput="onPisosChange()" />
+              <span class="field-hint">Rango: 1 – 50 pisos</span>
+              <span class="field-error">Valor fuera de rango (1 – 50)</span>
             </div>
-            <div class="field">
-              <label for="sel-core">Piso del Core / CPD</label>
-              <select id="sel-core" onchange="onCoreChange()">
-                <option value="1" selected>Piso 1 (recomendado)</option>
-                <option value="2">Piso 2</option>
-                <option value="3">Piso 3</option>
-              </select>
-              <span class="field-hint">Normalmente planta baja (piso 1)</span>
+            <div class="field" id="field-core">
+              <label for="inp-core">Piso del Core / CPD</label>
+              <input type="number" id="inp-core" min="1" max="3" value="1"
+                     placeholder="Ej: 1"
+                     onkeydown="blockInvalidNumKeys(event)"
+                     oninput="onCoreChange()" />
+              <span class="field-hint" id="hint-core">Rango: 1 – 3 (debe ser ≤ número de pisos)</span>
+              <span class="field-error" id="error-core">Debe estar entre 1 y el número de pisos</span>
             </div>
           </div>
         </div>
@@ -487,6 +530,18 @@
                   onclick="selectExportTab(this)" role="tab">⚠ Borrado Seguro</button>
         </div>
 
+        <!-- Sub-selector visible solo en pestaña Borrado Seguro -->
+        <div class="rollback-subtabs hidden" id="rollback-subtabs" role="tablist"
+             aria-label="Vendor a deshacer">
+          <span class="subtab-label">Vendor a deshacer:</span>
+          <button class="rb-subtab active" data-vendor="cisco"
+                  onclick="selectRollbackVendor(this)" role="tab">Cisco IOS/XE</button>
+          <button class="rb-subtab" data-vendor="huawei"
+                  onclick="selectRollbackVendor(this)" role="tab">Huawei VRP</button>
+          <button class="rb-subtab" data-vendor="fortinet"
+                  onclick="selectRollbackVendor(this)" role="tab">FortiGate</button>
+        </div>
+
         <!-- Área de código -->
         <div class="export-view-wrapper">
           <div class="code-wrapper" id="code-wrapper">
@@ -495,16 +550,74 @@
           </div>
         </div>
 
-        <!-- Botón único de exportación completa -->
-        <div class="download-row">
-          <button class="btn-download btn-download-primary" onclick="downloadPlan()">
-            ↓ Exportar plan completo (HTML)
-          </button>
+        <!-- Botones de exportación: 6 formatos organizados por uso -->
+        <div class="export-formats">
+          <div class="export-format-group">
+            <span class="export-format-label">Documento completo</span>
+            <div class="export-format-row">
+              <button class="btn-export-fmt btn-export-primary"
+                      onclick="downloadPlan()"
+                      title="HTML autocontenido con todo: métricas, VLSM, configs, topología, rollback">
+                <span class="export-icon">⬢</span>
+                <span class="export-name">HTML completo</span>
+                <span class="export-meta">Auto­contenido · imprimible</span>
+              </button>
+              <button class="btn-export-fmt"
+                      onclick="exportPlanPDF()"
+                      title="PDF profesional con resumen, VLSM y reservas">
+                <span class="export-icon">▤</span>
+                <span class="export-name">PDF ejecutivo</span>
+                <span class="export-meta">Entregable firmable</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="export-format-group">
+            <span class="export-format-label">Datos tabulares</span>
+            <div class="export-format-row">
+              <button class="btn-export-fmt"
+                      onclick="exportPlanExcel()"
+                      title="Libro Excel con hojas Resumen / VLSM IPv4 / VLSM IPv6 / Reservas">
+                <span class="export-icon">⊞</span>
+                <span class="export-name">Excel (.xlsx)</span>
+                <span class="export-meta">4 hojas · ingenieros</span>
+              </button>
+              <button class="btn-export-fmt"
+                      onclick="exportPlanJSON()"
+                      title="JSON editable y reimportable — ideal para versionar">
+                <span class="export-icon">{ }</span>
+                <span class="export-name">JSON editable</span>
+                <span class="export-meta">Versionable · reimportable</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="export-format-group">
+            <span class="export-format-label">Topología editable</span>
+            <div class="export-format-row">
+              <button class="btn-export-fmt"
+                      onclick="exportPlanMermaid()"
+                      title="Texto Mermaid pegable en GitHub, Notion, Confluence">
+                <span class="export-icon">⌘</span>
+                <span class="export-name">Mermaid</span>
+                <span class="export-meta">GitHub · Notion · Confluence</span>
+              </button>
+              <button class="btn-export-fmt"
+                      onclick="exportPlanDrawio()"
+                      title="XML para abrir en draw.io / diagrams.net">
+                <span class="export-icon">◇</span>
+                <span class="export-name">Drawio</span>
+                <span class="export-meta">app.diagrams.net</span>
+              </button>
+            </div>
+          </div>
         </div>
-        <p style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.6">
-          El archivo incluye: métricas · tabla VLSM · IPs de reserva · tabla de enrutamiento
-          (inter-VLAN via SVIs + rutas estáticas WAN) · topología SVG · configs
-          Cisco / Huawei / FortiGate · borrado seguro por vendor.
+
+        <p style="font-size:11px;color:var(--text-muted);margin-top:14px;line-height:1.7">
+          <strong>HTML completo:</strong> incluye todo (métricas, VLSM, IPs reserva,
+          enrutamiento, topología SVG, configs por vendor, borrado seguro).<br>
+          <strong>JSON editable:</strong> permite cargar el plan luego con el botón
+          "Cargar plan" del header para continuar editando.
         </p>
       </section><!-- /step-5 -->
 
@@ -559,6 +672,42 @@
 
   </main>
 
+  <!-- MODAL MIS PLANES EN LA NUBE -->
+  <div class="modal-overlay hidden" id="modal-cloud-plans">
+    <div class="modal modal-large">
+      <div class="modal-header">
+        <h3 class="modal-title">☁ Mis planes en la nube</h3>
+        <button class="modal-close" type="button" onclick="closeCloudPlansModal()" aria-label="Cerrar">✕</button>
+      </div>
+
+      <!-- Guardar plan actual -->
+      <div class="cloud-save-section">
+        <span class="group-label">Guardar plan actual</span>
+        <div class="cloud-save-row">
+          <input type="text" id="inp-plan-name" class="cloud-name-input"
+                 placeholder="Ej: Sede principal Bogotá" maxlength="80" />
+          <button class="btn-nav btn-next" type="button" onclick="cloudSaveCurrentPlan()">
+            ↓ Guardar
+          </button>
+        </div>
+        <span class="field-hint" style="text-align:left;display:block;margin-top:6px">
+          Si dejas el nombre vacío se usa el dominio interno del plan.
+        </span>
+      </div>
+
+      <hr class="divider" />
+
+      <!-- Listado -->
+      <div class="cloud-list-header">
+        <span class="group-label" style="margin-bottom:0">Planes guardados</span>
+        <button class="btn-cloud-refresh" type="button" onclick="refreshCloudPlansList()" title="Refrescar lista">↻</button>
+      </div>
+      <div class="cloud-plans-list" id="cloud-plans-list">
+        <p class="placeholder-msg">Cargando planes…</p>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL PLAN FINALIZADO -->
   <div class="modal-overlay hidden" id="modal-finish">
     <div class="modal">
@@ -573,6 +722,12 @@
   </div>
 
   <div class="toast hidden" id="toast" role="alert" aria-live="polite"></div>
+
+  <!-- Firebase (módulo ES6) — se carga primero para que window.NetPlanCloud
+       esté disponible cuando script.js lo necesite. Si firebase-config.js
+       no fue editado (placeholders), la nube simplemente no se activa
+       y los botones cloud-only quedan ocultos por CSS. -->
+  <script type="module" src="firebase-cloud.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
