@@ -3628,6 +3628,7 @@ function updateUserMenuUI(user) {
   const info      = document.getElementById('user-menu-info');
   const btnIn     = document.getElementById('btn-signin-google');
   const btnOut    = document.getElementById('btn-signout');
+  const anonWarn  = document.getElementById('anon-warning');
 
   if (user.isAnonymous) {
     if (avatar) avatar.textContent = '?';
@@ -3635,6 +3636,7 @@ function updateUserMenuUI(user) {
     if (info)   info.textContent   = 'Sesión anónima — los planes solo son accesibles desde este navegador';
     btnIn?.classList.remove('hidden');
     btnOut?.classList.add('hidden');
+    anonWarn?.classList.remove('hidden');
   } else {
     const display = user.displayName || user.email || 'Usuario';
     const initial = (display[0] || 'U').toUpperCase();
@@ -3643,6 +3645,7 @@ function updateUserMenuUI(user) {
     if (info)   info.textContent   = user.email || display;
     btnIn?.classList.add('hidden');
     btnOut?.classList.remove('hidden');
+    anonWarn?.classList.add('hidden');
   }
 }
 
@@ -3665,14 +3668,25 @@ document.addEventListener('click', (e) => {
 async function cloudSignInWithGoogle() {
   if (!window.NetPlanCloud?.isAvailable()) return;
   document.getElementById('user-menu-dropdown')?.classList.add('hidden');
+
+  /* Si el modal de planes está abierto, lo cerramos antes del popup
+     (algunos navegadores bloquean popups con modales encima) y lo
+     reabrimos al volver para que el usuario vea su lista actualizada. */
+  const modal      = document.getElementById('modal-cloud-plans');
+  const wasOpen    = modal && !modal.classList.contains('hidden');
+  if (wasOpen) modal.classList.add('hidden');
+
   try {
     await window.NetPlanCloud.signInWithGoogle();
     showToast('Sesión iniciada con Google', 'success');
+    if (wasOpen) openCloudPlansModal();
   } catch (e) {
     if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
-      return; /* usuario canceló, sin toast */
+      if (wasOpen) modal.classList.remove('hidden');   // restaurar modal
+      return;
     }
     showToast('No se pudo iniciar sesión: ' + (e.message || e.code), 'error');
+    if (wasOpen) modal.classList.remove('hidden');
   }
 }
 

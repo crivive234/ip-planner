@@ -680,6 +680,21 @@
         <button class="modal-close" type="button" onclick="closeCloudPlansModal()" aria-label="Cerrar">✕</button>
       </div>
 
+      <!-- Aviso para sesión anónima — visible solo si user.isAnonymous === true.
+           El JS lo muestra/oculta dinámicamente vía updateUserMenuUI(). -->
+      <div class="anon-warning hidden" id="anon-warning" role="status">
+        <span class="anon-warning-icon">ⓘ</span>
+        <div class="anon-warning-text">
+          <strong>Estás en sesión anónima.</strong>
+          Tus planes están guardados en este navegador y son accesibles solo desde
+          aquí. Si limpias los datos del navegador o lo abres desde otro dispositivo,
+          no podrás recuperarlos.
+          <button class="anon-warning-cta" type="button" onclick="cloudSignInWithGoogle()">
+            Iniciar sesión con Google →
+          </button>
+        </div>
+      </div>
+
       <!-- Guardar plan actual -->
       <div class="cloud-save-section">
         <span class="group-label">Guardar plan actual</span>
