@@ -1,300 +1,408 @@
 # NetPlan Pro v4.0
 
-Herramienta web de planificación de redes corporativas con VLSM, Dual-Stack (IPv4 + IPv6), enrutamiento estático documentado y generación de configuraciones listas para aplicar en equipos Cisco, Huawei y FortiGate.
+> **Herramienta web de planificación de red multi-vendor con enrutamiento estático Dual-Stack**  
+> VLSM automático · IPv4 + IPv6 ULA · Cisco IOS/XE · Huawei VRP · FortiGate · Firebase Cloud
+
+---
+
+## ¿Qué es NetPlan Pro?
+
+NetPlan Pro es una herramienta web de planificación de redes corporativas construida en HTML, CSS y JavaScript vanilla — sin frameworks, sin build steps, sin dependencias de runtime. El operador de red captura las decisiones de diseño una sola vez a través de un wizard de 6 pasos y obtiene:
+
+- **Plan de direccionamiento VLSM** completo con IPv4 y IPv6 Dual-Stack
+- **Configuraciones listas para aplicar** en Cisco IOS/XE, Huawei VRP y FortiGate
+- **Borrado seguro por vendor** (rollback completo sin tocar la imagen del SO)
+- **Topología lógica SVG** generada automáticamente con soporte de Dual-Link LACP
+- **Exportación en 6 formatos**: HTML, PDF, Excel, JSON, Mermaid, drawio
+- **Persistencia en la nube** vía Firebase Auth + Firestore (opcional)
+
+---
+
+## Demo rápida
+
+```bash
+# Sin instalación — servir los archivos estáticos
+python3 -m http.server 8000
+# Abrir http://localhost:8000
+```
+
+> **Nota:** Firebase (guardado en la nube) requiere configuración adicional. Sin configurarla, la herramienta funciona completamente en modo local con autoguardado en `localStorage`.
 
 ---
 
 ## Características principales
 
-- **Wizard guiado de 6 pasos** — desde la infraestructura hasta la exportación
-- **VLSM automático** — calcula subredes de longitud variable a partir del número real de hosts por VLAN
-- **Dual-Stack (IPv4 + IPv6)** — prefijo ULA `/48` derivado de la red base; bloque `/64` por VLAN; SLAAC + DHCPv6 Stateless
-- **Factor de crecimiento configurable** — 1.5× (corto plazo), 2× (medio, recomendado) o 3× (largo plazo)
-- **6 VLANs prediseñadas** con factores calibrados, más soporte para VLANs personalizadas
-- **IPs de reserva por VLAN** — rango `.1`–`.10` con alias, IPv4, IPv6 y tipo de stack (IPv4 / IPv6 / Dual)
-- **Enrutamiento estático documentado** — separación explícita entre rutas conectadas (SVIs) y rutas estáticas (default + sedes remotas WAN)
-- **Generadores de configuración** para Cisco IOS/XE, Huawei VRP y FortiGate (FortiOS)
-- **Borrado seguro por vendor** — comandos inversos exactos sin afectar la imagen del sistema operativo
-- **Topología lógica SVG** — generada automáticamente sin dependencias externas
-- **Exportación unificada** — un único HTML autocontenido con tabla VLSM, IPs de reserva, tabla de enrutamiento, topología y configuraciones por vendor
+### Wizard de 6 pasos
 
----
+| Paso | Contenido |
+|------|-----------|
+| **1 — Infraestructura** | Pisos, Core/CPD, hosts por piso, puertos, redundancia, vendor, factor de crecimiento |
+| **2 — Red base** | Auto-cálculo del bloque IPv4 óptimo o override CIDR personalizado |
+| **3 — Servicios y WAN** | DNS, NTP, dominio, Dual-Stack IPv6, next-hop WAN, rutas estáticas remotas |
+| **4 — VLANs** | Definición de VLANs con tipo, piso asignado, hosts requeridos e IPs de reserva |
+| **5 — Resumen** | Tabla VLSM completa, métricas globales, topología SVG, tabla de enrutamiento |
+| **6 — Exportación** | 6 formatos de exportación + pestaña de borrado seguro por vendor |
 
-## Archivos del proyecto
+### Motor VLSM
 
-```
-netplan/
-├── index.html    — Estructura HTML del wizard (578 líneas)
-├── script.js     — Lógica completa de la aplicación (2 479 líneas, 83 funciones)
-└── styles.css    — Estilos de la interfaz (1 090 líneas)
-```
+- Ordena las VLANs por demanda decreciente y asigna subredes contiguas dentro del bloque base
+- Calcula máscara, gateway, broadcast, primera/última IP útil, hosts útiles y eficiencia por VLAN
+- Aplica factor de crecimiento configurable: `1.5×` (1–2 años), `2×` (3–5 años), `3×` (5–10 años)
+- Score de eficiencia global con validación del umbral mínimo (50% aceptable, 80%+ excelente)
 
-No requiere dependencias externas, frameworks ni servidor. Se ejecuta directamente en el navegador.
+### Dual-Stack IPv6
 
----
+- Deriva prefijo ULA `/48` a partir del identificador IPv4 de la red base (`fd0a:XXXX::/48`)
+- Asigna un bloque `/64` por VLAN siguiendo la convención de mejor práctica IPv6
+- VLAN ID = Subnet ID en IPv6 (correspondencia uno a uno, simplifica operación NOC)
+- Genera pools DHCP IPv4 y DHCPv6 stateless (SLAAC + `other-config-flag`)
 
-## Cómo usar
+### Generadores por vendor
 
-1. Abre `index.html` en cualquier navegador moderno (Chrome, Firefox, Edge, Safari)
-2. Completa los 6 pasos del wizard en orden
-3. En el **Paso 05** revisa el resumen y la topología generada
-4. En el **Paso 06** previsualiza la configuración por vendor y exporta el plan completo
-
----
-
-## Pasos del wizard
-
-### Paso 01 — Infraestructura
-
-Define los parámetros físicos de la red:
-
-| Campo | Descripción | Valores válidos |
-|---|---|---|
-| Número de pisos | Total de plantas del edificio | 1 – 10 |
-| Piso del Core / CPD | Planta donde se ubica el Core Switch y el CPD | 1 – pisos configurados |
-| Hosts por piso (promedio) | Cantidad estimada de dispositivos por planta | 1 – 500 |
-| Puertos por switch | Capacidad del switch de acceso | 24 o 48 |
-| Factor de crecimiento | Multiplicador de hosts para dimensionar la red base | 1.5× / 2× / 3× |
-| Redundancia de enlaces | Modo de conexión entre switches | Single-Link / Dual-Link (LACP) |
-| Vendor principal | Fabricante del equipo Core | Cisco / Huawei |
-
-**Cálculos automáticos que se actualizan en tiempo real:**
-- Switches de acceso necesarios por piso: `ceil(hosts_piso / puertos)`
-- Hosts totales: `hosts_piso × pisos`
-- Hosts planificados: `hosts_totales × growth_factor`
-
-### Paso 02 — Análisis IPv4
-
-La herramienta selecciona automáticamente la red base más eficiente del espacio privado RFC 1918, con los siguientes criterios:
-
-- Espacio privado válido (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`)
-- Prefijo calculado: `32 − ceil(log₂(hosts_planificados + 2))`
-- Score de eficiencia: porcentaje de hosts planificados sobre el total de hosts útiles de la red base
-
-También se puede sobrescribir la red base con una notación CIDR personalizada.
-
-### Paso 03 — Servicios de red
-
-| Campo | Descripción | Por defecto |
-|---|---|---|
-| DNS primario IPv4 | Servidor DNS para los pools DHCP | 8.8.8.8 |
-| DNS primario IPv6 | Servidor DNS en los pools DHCPv6 | 2001:4860:4860::8888 |
-| NTP | Servidor de tiempo | pool.ntp.org |
-| Dominio interno | Sufijo DNS de la organización | corp.local |
-| IPv6 Dual-Stack | Activa el direccionamiento IPv6 en todas las VLANs | Activado |
-| Next-hop WAN *(opcional)* | IPv4 del equipo de borde del ISP o firewall externo | — |
-| Redes remotas *(opcional)* | CIDRs de sedes remotas, una por línea | — |
-
-Si se configuran redes remotas, la herramienta genera rutas estáticas específicas en la configuración de todos los vendors.
-
-### Paso 04 — VLANs
-
-La herramienta genera automáticamente las siguientes VLANs prediseñadas:
-
-| VLAN ID | Nombre | Ámbito | Factor de hosts | Hosts mínimos |
-|---|---|---|---|---|
-| 10 | Usuarios | Todos los pisos | 70 % del total | 10 |
-| 20 | Administración | Piso Core (CPD) | 10 % del total | 10 |
-| 30 | Servidores | Piso Core (CPD) | 5 % del total | 20 |
-| 40 | VoIP | Todos los pisos | 30 % del total | 10 |
-| 50 | WiFi-Invitados | Todos los pisos | 40 % del total | 10 |
-| 60 | Gestión | Todos los pisos | Calculado por dispositivos | — |
-
-**Cálculo de VLAN 60 (Gestión):**
-```
-switches_por_piso  = ceil(hosts_piso / puertos)
-aps_por_piso       = ceil(hosts_piso / 30)       ← 1 AP c/30 usuarios (IEEE 802.11)
-dispositivos_mgmt  = (switches + aps) × pisos + 3  ← +3: Core + Firewall + margen
-```
-
-**Indicadores visuales:**
-- ⚠ **Supera prom./piso** — aparece en la tarjeta cuando `hosts_required > hosts_piso`, advirtiendo que la VLAN fue dimensionada considerando múltiples pisos
-- Las VLANs se ordenan de mayor a menor hosts requeridos antes de aplicar VLSM, garantizando la asignación óptima
-
-**VLANs personalizadas** — se pueden agregar VLANs adicionales con cualquier ID (1–4094), nombre, tipo y número de hosts. La herramienta valida que el ID no esté duplicado.
-
-**IPs de reserva por VLAN:**
-- Rango disponible: `.1` (gateway) a `.10` de cada subred — máximo 9 reservas por VLAN
-- Campos: Alias/Hostname, IPv4, IPv6 y tipo de stack (Solo IPv4 / Solo IPv6 / Dual Stack)
-- Las reservas se incluyen como pools DHCP estáticos en la configuración exportada
-
-### Paso 05 — Resumen
-
-Muestra la tabla VLSM completa con todos los parámetros calculados y la topología lógica SVG generada automáticamente.
-
-### Paso 06 — Exportar
-
-Cuatro tabs de previsualización:
-
-| Tab | Contenido |
-|---|---|
-| Cisco IOS/XE | Configuración para Core Switch Catalyst y ASA/Firepower |
-| Huawei VRP | Configuración para switches S-series y USG |
-| FortiGate (FW) | Configuración para firewall perimetral FortiOS |
-| ⚠ Borrado Seguro | Comandos inversos para deshacer toda la configuración |
-
-El botón **Exportar plan completo (HTML)** descarga un único archivo autocontenido con:
-- Métricas globales (eficiencia, VLANs, hosts, switches)
-- Tabla VLSM completa (IPv4 + IPv6)
-- Tabla de IPs de reserva con stack
-- Tabla de enrutamiento documentada (conectadas vs. estáticas)
-- Nota explicativa sobre inter-VLAN via SVIs
-- Topología lógica SVG
-- Configuraciones Cisco / Huawei / FortiGate en tabs interactivos
-- Borrado seguro por vendor
-
----
-
-## Cálculos técnicos
-
-### VLSM (Variable Length Subnet Masking)
-
-Las VLANs se ordenan de mayor a menor `hosts_required` y se asignan subredes de forma contigua dentro del bloque base:
+Tres generadores independientes que comparten helpers para evitar duplicación:
 
 ```
-prefix_vlan = 32 − ceil(log₂(hosts_required + 2))
-hosts_útiles = 2^(32 − prefix) − 2
-eficiencia   = round(hosts_required / hosts_útiles × 100) %
+Cisco IOS/XE    → VLANs, SVIs, DHCP pools, rutas estáticas, LACP
+Huawei VRP      → VLANs, VLANIF, DHCP, rutas estáticas, Eth-Trunk
+FortiGate       → Zonas, interfaces, DHCP server, políticas, rutas estáticas
 ```
 
-### IPv6 ULA
+### Borrado seguro
 
-El prefijo `/48` se deriva del último octeto par de la dirección IPv4 base:
+Comandos inversos exactos por vendor (`no` / `undo` / `delete`) en orden de dependencia:
 
 ```
-fd[HH]:[LLLL]:0000::/48
+Rutas estáticas → DHCP → SVIs → VLANs → Trunks/LAG
 ```
 
-Cada VLAN recibe un bloque `/64` a partir del offset del ID de VLAN, y la gateway es siempre `::1` dentro de ese bloque.
+**No elimina la imagen del SO ni las licencias del equipo.**
 
-### Enrutamiento estático
+### Topología SVG
 
-La herramienta distingue explícitamente entre:
+- Layout dinámico que escala con el número de pisos (modo wrap automático si pisos > 5)
+- Diferencia visual **Single-Link** vs **Dual-Link LACP** (líneas dobles con etiqueta `LACP`)
+- Chips de VLAN coloreados por tipo bajo cada switch, sin truncar
+- Exportable en Mermaid (GitHub/Notion/Confluence) y drawio (diagrams.net)
 
-- **Rutas conectadas** — instaladas automáticamente en el RIB del Core Switch al configurar cada SVI. No requieren comandos `ip route`.
-- **Ruta estática por defecto** — `ip route 0.0.0.0 0.0.0.0 [IP_Firewall]` para el tráfico hacia Internet.
-- **Rutas estáticas WAN** — una entrada por red remota declarada en el Paso 03, con next-hop hacia el equipo de borde del ISP.
+### Persistencia
 
----
+Tres niveles complementarios:
 
-## Borrado seguro (Rollback)
-
-Genera los comandos inversos exactos en el orden correcto (rutas → DHCP → IPv6 → SVIs → VLANs → LACP) para deshacer la configuración aplicada **sin afectar la imagen del sistema operativo**:
-
-| Vendor | Borrado de config | Borrado de startup (opcional) |
-|---|---|---|
-| Cisco IOS/XE | `no vlan`, `no interface Vlan`, `no ip dhcp pool`, `no ip route` | `write erase` + `reload` |
-| Huawei VRP | `undo vlan batch`, `undo interface Vlanif`, `undo ip pool`, `undo ip route-static` | `reset saved-configuration` + `reboot` |
-| FortiGate | `delete system interface`, `delete system dhcp server`, `delete router static` | `execute factoryreset` |
-
-> **Nota:** Los comandos opcionales de borrado de startup (`write erase`, `reset saved-configuration`, `execute factoryreset`) eliminan la configuración guardada pero **nunca** tocan la imagen IOS/VRP/FortiOS ni las licencias del equipo.
+```
+localStorage    → Autoguardado local con debounce (800 ms) + banner de recuperación
+Firebase        → Guardado multi-dispositivo por usuario (anónimo o Google)
+JSON            → Export/import versionado (esquema netplan.v1)
+```
 
 ---
 
-## VLANs WiFi y configuración de APs
+## Estructura del proyecto
 
-La VLAN 50 (WiFi-Invitados) genera correctamente la SVI, el pool DHCP IPv4 e IPv6 y las rutas correspondientes. Sin embargo, la configuración específica del punto de acceso inalámbrico (SSID, cifrado WPA3, bandas 2.4/5 GHz, portal cautivo, roaming) es interactiva y específica de cada vendor:
-
-- **Cisco** — Catalyst Center / Meraki Dashboard
-- **Huawei** — AirEngine Campus Insight
-- **Ubiquiti** — UniFi Controller
-- **Aruba** — Aruba Central / AOS
-
-La configuración exportada incluye un comentario explícito en el bloque de la VLAN 50 indicando este punto.
-
----
-
-## Estructura del código (`script.js`)
-
-El archivo está organizado en 17 secciones documentadas:
-
-| Sección | Contenido |
-|---|---|
-| 1 — Estado global | Objeto `S` — única fuente de verdad de toda la aplicación |
-| 2 — Constantes | `VLAN_TEMPLATES`, `TYPE_BADGE`, rangos de validación |
-| 3 — Utilidades IPv4 | `ipToInt`, `intToIp`, `prefixToMask`, `parseCIDR`, `calcNextSubnet` |
-| 4 — Utilidades IPv6 | `calcULAPrefix`, `calcVlanIPv6`, `isValidIPv6` |
-| 5 — Validaciones | `isValidIPv4`, `isValidDomain`, `setFieldValidity`, `validateStep` |
-| 6 — Paso 01 | `onHostsChange`, `onCoreChange`, `onGrowthChange`, `selectToggle`, `selectVendor` |
-| 7 — Paso 02 | `runAnalysis`, `onOverrideChange` |
-| 8 — Paso 03 | `onServicesChange`, `onIPv6Toggle`, `onWanChange` |
-| 9 — Paso 04 (lógica) | `initVlanDefs`, `buildVLANPlan`, `saveVlan`, `deleteVlan`, `validateVlanForm` |
-| 10 — Paso 04 (render) | `renderVLANCards`, `editVlan` |
-| 10b — IPs de reserva | `renderReserveSection`, `saveReservation`, `deleteReservation`, `validateReserveForm` |
-| Helpers config | `buildWifiComment`, `buildWanRoutes` — reutilizados en los tres vendors |
-| 12 — Cisco | `generateCiscoConfig` |
-| 13 — Huawei | `generateHuaweiConfig` |
-| 13b — FortiGate | `generateFortinetConfig` |
-| 14 — Exportar | `selectExportTab`, `renderExportCode`, `generateRollback`, `generateTopologySVG`, `downloadPlan` |
-| 15 — Navegación | `changeStep`, `updateStepUI` |
-| 16 — UI | `updateSidePanel`, `showToast`, `closeModal`, `resetApp` |
-| 17 — Init | Listener `DOMContentLoaded` |
+```
+netplan-pro/
+├── index.html              # Aplicación completa (wizard, modales, UI)
+├── script.js               # Lógica principal (~3800 líneas)
+│   ├── Motor VLSM          # Cálculo de subredes IPv4 + IPv6
+│   ├── Generadores         # Cisco / Huawei / FortiGate / Rollback
+│   ├── Topología SVG       # Generador + Mermaid + drawio
+│   ├── Exportación         # HTML / PDF / Excel / JSON / Mermaid / drawio
+│   ├── Persistencia        # localStorage + import/export JSON
+│   └── UI Cloud            # Handlers Firebase (auth, modal planes)
+├── styles.css              # Sistema de diseño (~1600 líneas)
+│   └── Variables CSS       # Paleta, tipografía, espaciado, radios
+├── firebase-cloud.js       # Módulo ES6 — Firebase Auth + Firestore CRUD
+├── firebase-config.js      # Configuración Firebase (editar con tus credenciales)
+├── firestore.rules         # Reglas de seguridad Firestore
+└── FIREBASE_SETUP.md       # Guía de configuración Firebase paso a paso
+```
 
 ---
 
-## Validaciones implementadas
+## Exportación en 6 formatos
 
-Todos los campos del wizard tienen validación en tiempo real que bloquea el avance al siguiente paso si hay errores:
+| Formato | Descripción | Librería |
+|---------|-------------|---------|
+| **HTML completo** | Documento autocontenido con todo el plan, configs y topología | Nativa |
+| **PDF ejecutivo** | Resumen + tabla VLSM + reservas, firmable | jsPDF + autoTable (lazy CDN) |
+| **Excel (.xlsx)** | 4 hojas: Resumen · VLSM IPv4 · VLSM IPv6 · Reservas IP | SheetJS (lazy CDN) |
+| **JSON editable** | Plan versionado reimportable (esquema `netplan.v1`) | Nativa |
+| **Mermaid** | Diagrama de topología para GitHub / Notion / Confluence | Nativa |
+| **drawio** | XML editable en [app.diagrams.net](https://app.diagrams.net) | Nativa |
 
-- **IPv4** — formato `x.x.x.x` con octetos 0–255
-- **IPv6** — notación completa y abreviada `::` permitida
-- **CIDR** — red y prefijo válidos (8–30), dentro del espacio RFC 1918
-- **Hostname / Dominio** — expresión regular `[a-zA-Z0-9\-\.]+`
-- **ID de VLAN** — entero 1–4094, único dentro del plan
-- **Hosts por piso** — entero 1–500
-- **Alias de reserva** — alfanumérico con guion y punto, máximo 30 caracteres
-- **IPs de reserva** — dentro del rango `.1`–`.10` de la subred VLAN, sin duplicados
-- **Redes remotas WAN** — cada línea debe ser CIDR válido
-
----
-
-## Compatibilidad
-
-| Entorno | Soporte |
-|---|---|
-| Chrome / Edge (Chromium) | ✓ Completo |
-| Firefox | ✓ Completo |
-| Safari | ✓ Completo |
-| Dispositivos móviles | ✓ Responsive |
-| Servidor web | No requerido — archivo estático |
-| Dependencias npm / CDN | Ninguna |
+Las librerías PDF y Excel se cargan **lazy desde CDN** solo cuando se solicitan — la página inicial pesa menos de 250 KB.
 
 ---
 
-## Historial de versiones
+## Configuración de Firebase (opcional)
 
-### v4.0 (actual)
-- Borrado seguro por vendor (Cisco, Huawei, FortiGate) con tab dedicado en el Paso 06
-- Topología lógica SVG generada automáticamente sin librerías externas
-- Exportación unificada en un único HTML autocontenido (`downloadPlan`)
-- Sección de enrutamiento estático WAN con validación CIDR por línea
-- Factor de crecimiento configurable (1.5×/2×/3×)
-- VLAN 50 WiFi-Invitados con comentario explícito para configuración de AP
-- Helpers compartidos `buildWifiComment` y `buildWanRoutes` — sin duplicación entre vendors
-- Conteo de APs en la VLAN de Gestión (`ceil(hosts/30)` por piso)
-- Ajuste de factores: Usuarios 0.70, VoIP 0.30, WiFi 0.40
-- Eliminación de `downloadSummary`, `downloadCisco`, `downloadHuawei`, `downloadFortinet`
+Sin Firebase, la herramienta funciona completamente en modo local. Los botones de nube quedan ocultos automáticamente.
 
-### v1.0
-- Factor de crecimiento configurable en el Paso 01
-- Sección de IPs de reserva Dual Stack por VLAN (máx. 9 por VLAN)
-- Indicador visual ⚠ en tarjetas VLAN cuando `hosts_required > hosts_piso`
-- VLAN 50 WiFi-Invitados agregada a las plantillas
-- Enrutamiento estático WAN opcional en el Paso 03
+Para activar el guardado en la nube:
 
-### v2.0
-- Indicador de desbordamiento de hosts por VLAN
-- Sección de reservas con validación en tiempo real
-- Corrección del factor VoIP (0.50 → 0.30)
+### 1. Crear proyecto en Firebase
 
-### v3.0
-- Wizard de 6 pasos con VLSM automático
-- Dual-Stack IPv6 con prefijo ULA derivado de la red base
-- Generadores de configuración Cisco, Huawei y FortiGate
-- Panel lateral con estado del plan en tiempo real
+1. Ir a [console.firebase.google.com](https://console.firebase.google.com)
+2. Crear proyecto → habilitar **Authentication** (Google + Anónimo) → crear **Firestore Database**
+
+### 2. Pegar las reglas de seguridad
+
+En Firestore → Rules, pegar el contenido de `firestore.rules`:
+
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/plans/{planId} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == userId;
+    }
+  }
+}
+```
+
+### 3. Editar `firebase-config.js`
+
+```javascript
+export const firebaseConfig = {
+  apiKey:            "TU_API_KEY",
+  authDomain:        "TU_PROYECTO.firebaseapp.com",
+  projectId:         "TU_PROYECTO_ID",
+  storageBucket:     "TU_PROYECTO.appspot.com",
+  messagingSenderId: "TU_SENDER_ID",
+  appId:             "TU_APP_ID",
+};
+```
+
+### 4. Servir desde servidor HTTP
+
+Firebase Auth con Google requiere un servidor HTTP (no `file://`):
+
+```bash
+# Python
+python3 -m http.server 8000
+
+# Node.js
+npx serve
+
+# VS Code — extensión "Live Server" → click derecho en index.html
+```
+
+Ver `FIREBASE_SETUP.md` para instrucciones detalladas.
 
 ---
 
-## Licencia
+## Esquema JSON versionado
 
-Desarrollado como proyecto académico en el marco de la asignatura **Interconexión de Redes WAN** — Fundación Universitaria Compensar, Bogotá D.C., Colombia. 2026.
+El plan se serializa como `netplan.v1`. Solo se guardan las **decisiones del usuario** — los valores derivados (redes, máscaras, gateways) se recalculan al importar:
+
+```json
+{
+  "schema": "netplan.v1",
+  "metadata": {
+    "name": "metalpro.local",
+    "createdAt": "2026-05-09T21:06:36.283Z",
+    "updatedAt": "2026-05-09T21:06:36.283Z"
+  },
+  "infrastructure": {
+    "pisos": 4,
+    "core_piso": 1,
+    "hosts_piso": 60,
+    "puertos": 48,
+    "redundancia": "dual",
+    "vendor": "cisco",
+    "growth_factor": 2
+  },
+  "ipv4": { "override": "10.50.0.0/20" },
+  "services": {
+    "dns4": "10.50.1.10",
+    "dns6": "2001:4860:4860::8888",
+    "ntp": "10.50.1.11",
+    "domain": "metalpro.local",
+    "ipv6": true,
+    "wan_nexthop": "190.85.45.1",
+    "wan_routes": ["192.168.30.0/24", "192.168.40.0/24", "172.20.0.0/16"]
+  },
+  "vlans": [
+    {
+      "id": 10,
+      "name": "Oficinas",
+      "type": "users",
+      "floor": "all",
+      "hosts_required": 120,
+      "reserved_ips": []
+    }
+  ]
+}
+```
+
+**Editá el JSON directamente** y reimportalo — el VLSM se recalcula automáticamente con los nuevos valores.
+
+---
+
+## Caso práctico: MetalPro S.A.S.
+
+Planta manufacturera con separación IT/OT (IEC 62443):
+
+| Parámetro | Valor |
+|-----------|-------|
+| Pisos | 4 (3 administrativos + 1 producción) |
+| Red base | `10.50.0.0/20` (4094 hosts disponibles) |
+| Prefijo IPv6 ULA | `fd0a:3200::/48` |
+| Eficiencia VLSM | **80%** |
+| VLANs | 7 (Oficinas, Servidores, VoIP, WiFi, OT-Producción, Cámaras, Gestión) |
+| Rutas estáticas | 4 (default + 3 WAN remotas: Medellín, Bogotá, Cloud ERP) |
+| Vendor | Cisco IOS/XE |
+| Redundancia | Dual-Link LACP |
+
+### Tabla VLSM generada
+
+| VLAN | Nombre | Red IPv4 | Gateway | Efic. | Subred IPv6 /64 |
+|------|--------|----------|---------|-------|-----------------|
+| 10 | Oficinas | `10.50.0.0/25` | `10.50.0.1` | 95% | `fd0a:3200:0:a::/64` |
+| 20 | Servidores | `10.50.2.0/27` | `10.50.2.1` | 100% | `fd0a:3200:0:14::/64` |
+| 30 | VoIP | `10.50.1.128/26` | `10.50.1.129` | 97% | `fd0a:3200:0:1e::/64` |
+| 40 | WiFi-Corp | `10.50.1.0/25` | `10.50.1.1` | 63% | `fd0a:3200:0:28::/64` |
+| 50 | OT-Producción | `10.50.0.128/25` | `10.50.0.129` | 79% | `fd0a:3200:0:32::/64` |
+| 60 | Cámaras-CCTV | `10.50.1.192/26` | `10.50.1.193` | 65% | `fd0a:3200:0:3c::/64` |
+| 99 | Gestión | `10.50.2.32/27` | `10.50.2.33` | 67% | `fd0a:3200:0:63::/64` |
+
+### Enrutamiento estático Dual-Stack
+
+```
+! Rutas conectadas (instaladas automáticamente por las SVIs)
+C  10.50.0.0/25    → SVI Vlan10   (Oficinas)
+C  10.50.2.0/27    → SVI Vlan20   (Servidores)
+C  10.50.1.128/26  → SVI Vlan30   (VoIP)
+C  10.50.1.0/25    → SVI Vlan40   (WiFi-Corp)
+C  10.50.0.128/25  → SVI Vlan50   (OT-Producción)
+C  10.50.1.192/26  → SVI Vlan60   (Cámaras-CCTV)
+C  10.50.2.32/27   → SVI Vlan99   (Gestión)
+
+! Rutas estáticas configuradas manualmente
+S* 0.0.0.0/0           → 10.50.1.194   (default → FW-01)
+S  192.168.30.0/24     → 190.85.45.1   (Sede Medellín)
+S  192.168.40.0/24     → 190.85.45.1   (Bodega Bogotá)
+S  172.20.0.0/16       → 190.85.45.1   (Cloud privado ERP)
+
+! IPv6
+S  ::/0               → fd0a:3200:0:3c::2  (default IPv6 → FW-01)
+```
+
+---
+
+## Stack tecnológico
+
+| Capa | Tecnología | Justificación |
+|------|-----------|---------------|
+| Frontend | HTML5 + CSS3 + JavaScript ES2022 vanilla | Sin build step, auditable, deployable en cualquier servidor estático |
+| Persistencia local | `localStorage` + `IndexedDB` | Autoguardado y persistencia offline |
+| Persistencia nube | Firebase Auth + Firestore (Spark — gratuito) | Multi-dispositivo, autenticación anónima + Google |
+| Excel | SheetJS 0.18.5 — lazy CDN | Export de 4 hojas sin inflar la carga inicial |
+| PDF | jsPDF 2.5.1 + autoTable 3.8.2 — lazy CDN | PDF firmable sin dependencias en runtime |
+| Tipografía | Plus Jakarta Sans + DM Mono (Google Fonts) | Identidad visual coherente y profesional |
+
+---
+
+## Limitaciones conocidas (roadmap v5.0)
+
+La herramienta genera aproximadamente el **70% de la configuración necesaria** para un despliegue real. El 30% restante se agrega manualmente:
+
+- **Hardening base** — SSH-only, AAA, banners, exec-timeout, service password-encryption
+- **Spanning-Tree explícito** — root bridge (`spanning-tree vlan X root primary`), portfast, BPDU guard
+- **ACLs inter-VLAN** — la segmentación lógica existe pero no se generan ACLs entre VLANs
+- **Defensas L2** — port-security, DHCP snooping, ARP inspection, 802.1X
+
+---
+
+## Requisitos
+
+- **Navegador moderno** con soporte ES2022: Chrome 90+, Firefox 88+, Edge 90+, Safari 15+
+- **Servidor HTTP** para usar Firebase (no funciona con `file://`)
+- **Cuenta Firebase** (gratuita, plan Spark) — solo si se quiere guardado en la nube
+
+---
+
+## Uso sin Firebase
+
+```bash
+# Clonar el repositorio
+git clone https://github.com/tu-usuario/netplan-pro.git
+cd netplan-pro
+
+# Servir con Python
+python3 -m http.server 8000
+
+# Abrir en el navegador
+# http://localhost:8000
+```
+
+Los botones "Mis planes" y el menú de usuario **no aparecen** hasta que `firebase-config.js` tenga credenciales reales. El resto de la herramienta funciona completamente sin Firebase.
+
+---
+
+## Deployment
+
+La herramienta es un sitio estático — se puede deployar en cualquier hosting sin configuración:
+
+```bash
+# GitHub Pages
+# Subí los archivos al repositorio y activá Pages en Settings → Pages
+
+# Netlify
+# Arrastrá la carpeta del proyecto a netlify.com/drop
+
+# Vercel
+vercel --prod
+
+# Servidor propio
+cp -r . /var/www/html/netplan/
+```
+
+Si usás Firebase, agregá el dominio de producción en:
+`Firebase Console → Authentication → Settings → Authorized domains`
+
+---
+
+## Control de versiones
+
+| Versión | Cambios principales |
+|---------|-------------------|
+| v4.0 | Base: wizard 6 pasos, VLSM IPv4, Dual-Stack IPv6, generadores Cisco/Huawei/FortiGate, rollback, topología SVG, export HTML |
+| v4.1 | Inputs numéricos validados (pisos/core), esquema JSON v1, import/export, autoguardado localStorage |
+| v4.2 | Firebase Auth + Firestore, modal "Mis planes en la nube", persistencia offline IndexedDB |
+| v4.3 | Topología SVG dinámica (Dual-Link visual, wrap mode), exports Excel/PDF/Mermaid/drawio |
+| v4.4 | Fix bug borrado seguro (sub-selector de vendor en pestaña Rollback) |
+| v4.5 | Aviso de sesión anónima en modal de planes |
+
+---
+
+## Créditos
+
+Desarrollado como proyecto final de la asignatura **Interconexión de Redes WAN** — Ingeniería en Telecomunicaciones, Fundación Universitaria Compensar (2026).
+
+**Autores:**
+- Jhonatan Ramos Ladino — jmiguelramos@ucompensar.edu.co
+- Cristian David Viasus Vega — cviasus@ucompensar.edu.co
+
+**Asistencia de IA:** Claude Opus 4.7 (Anthropic) — codificación, arquitectura y documentación técnica bajo supervisión y validación del equipo.
+
+---
+
+## Referencias
+
+- Cisco Systems. *Configuring IP Routing Protocols — Cisco IOS XE Documentation.* (2024)
+- Huawei Technologies. *VRP Configuration Guide — IP Routing.* (2024)
+- Fortinet Inc. *FortiGate Administration Guide — Static Routing.* (2024)
+- IETF. *RFC 1918 — Address Allocation for Private Internets.*
+- IETF. *RFC 4193 — Unique Local IPv6 Unicast Addresses.*
+- IETF. *RFC 4291 — IP Version 6 Addressing Architecture.*
+- ISA/IEC 62443. *Industrial Communication Networks: Network and System Security.*
+- NIST SP 800-82 Rev. 3. *Guide to Operational Technology (OT) Security.*
+
+---
+
+<div align="center">
+
+**NetPlan Pro v4.0** · Fundación Universitaria Compensar · 2026
+
+</div>
