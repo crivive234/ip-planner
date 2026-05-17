@@ -1053,9 +1053,8 @@ function renderSummary() {
       <td>${S.ipv6 && v.gateway_v6 ? v.gateway_v6 : '—'}</td>
     </tr>`).join('');
 
-  /* Render topología en preview */
-  const topo = document.getElementById('topo-preview');
-  if (topo) topo.innerHTML = generateTopologySVG();
+  /* Render tabla de conexiones físicas (reemplaza al SVG inline) */
+  renderConnectionsTable();
 }
 
 /* Helpers compartidos para configs */
@@ -2170,202 +2169,156 @@ function generateRollbackFortinet() {
 
 
 /* ══════════════════════════════════════════════════════════════
-   14c. TOPOLOGÍA SVG + DRAWIO
+   14c. CONEXIONES FÍSICAS + DRAWIO
+   v4.6.1 — Eliminado generateTopologySVG (preview inline).
+            La topología visual se obtiene exportando .drawio.
+            La tabla de conexiones físicas reemplaza la preview SVG.
    ══════════════════════════════════════════════════════════════ */
 
-function generateTopologySVG() {
-  if (!S.vlans.length) return '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
+/**
+ * Construye la lista de conexiones físicas del plan.
+ * Devuelve array de filas: { devA, ifA, devB, ifB, type, vlans }
+ *
+ * Refleja exactamente lo que se cablea según las configs generadas:
+ *   - FW ↔ Core (uplink: single o LACP)
+ *   - Core ↔ cada SW-ACC (trunk: single o LACP)
+ *
+ * NO incluye:
+ *   - Internet/WAN (fuera del control de la herramienta)
+ *   - APs WiFi (estimados, no configurados explícitamente)
+ *   - Hosts finales (no se cablean a nivel de plan)
+ */
+function buildConnectionsTable() {
+  if (!S.vlans.length) return [];
 
-  const CLR = {
-    accent:'#1a6fc4', accentDk:'#0f4d8f', accentLt:'#e8f0fb',
-    ok:'#1a7a4a', okBg:'#e8f5ee',
-    warn:'#875a00', warnBg:'#fff7ed',
-    err:'#c0392b', errBg:'#fef2f2',
-    purple:'#7c3aed', voip:'#0891b2',
-    border:'#d1dae6', borderStrong:'#94a3b8',
-    text:'#1a2332', muted:'#718096', bg:'#f7f9fb',
-  };
-  const TYPE_CLR = {
-    users:CLR.accent, admin:CLR.ok, servers:CLR.purple,
-    voip:CLR.voip, wifi:CLR.purple, mgmt:CLR.warn, custom:CLR.muted,
-  };
+  const rows    = [];
+  const dual    = S.redundancia === 'dual';
+  const vlanIds = S.vlans.map(v => v.id).join(',');
+  const isCisco = S.vendor === 'cisco';
 
-  const pisos     = S.pisos;
-  const dual      = S.redundancia === 'dual';
-  const swPerPiso = Math.max(1, Math.ceil((S.hosts_piso || 0) / S.puertos));
+  /* Sintaxis de interfaz según vendor */
+  const iface = (slot, port) => isCisco
+    ? `GigabitEthernet${slot}/${port}`
+    : `GigabitEthernet0/0/${port}`;
+  const ifaceCore = (port) => isCisco
+    ? `GigabitEthernet1/0/${port}`
+    : `GigabitEthernet0/0/${port}`;
+  const ifaceShort = (slot, port) => isCisco
+    ? `Gi${slot}/${port}`
+    : `GE0/0/${port}`;
+  const ifaceCoreShort = (port) => isCisco
+    ? `Gi1/0/${port}`
+    : `GE0/0/${port}`;
 
-  const WRAP_AT       = 5;
-  const swPerRow      = pisos > WRAP_AT ? Math.ceil(pisos / 2) : pisos;
-  const rows          = pisos > WRAP_AT ? 2 : 1;
-  const chipsPerRow   = 4;
-  const colW          = 150;
-  const margin        = 20;
-  const inetY         = 36, inetH = 28;
-  const fwY           = 88, fwH = 36;
-  const coreY         = 156, coreH = 48;
-  const swH           = 42;
-  const swStartY      = 250;
-  const swRowGap      = 180;
-  const legendH       = 30;
-
-  /* Calcular altura del SVG según VLANs por switch */
-  const maxVlansPerSw = Math.max(...Array.from({ length: pisos }, (_, i) => {
-    const fl = i + 1;
-    return S.vlans.filter(v =>
-      v.floor === 'all' || (v.floor === 'core' && fl === S.core_piso)
-    ).length;
-  }));
-  const chipsRows = Math.ceil(maxVlansPerSw / chipsPerRow);
-  const chipH = 14;
-  const chipsBlockH = chipsRows * (chipH + 4) + 14;
-
-  const svgW = Math.max(700, margin * 2 + swPerRow * colW);
-  const svgH = swStartY + rows * (swH + chipsBlockH + 20) + legendH + 30;
-
-  const cx = svgW / 2;
-  const esc = s => String(s ?? '').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
-
-  /* Calcular posiciones de switches */
-  const swPos = [];
-  for (let fl = 1; fl <= pisos; fl++) {
-    const rowIdx = Math.floor((fl - 1) / swPerRow);
-    const colIdx = (fl - 1) % swPerRow;
-    const rowSize = (rowIdx === rows - 1 && pisos % swPerRow !== 0) ? (pisos % swPerRow) : swPerRow;
-    const totalRowW = rowSize * colW;
-    const startX = cx - totalRowW / 2 + colW / 2;
-    swPos.push({
-      floor: fl,
-      isCore: fl === S.core_piso,
-      x: startX + colIdx * colW,
-      y: swStartY + rowIdx * (swH + chipsBlockH + 20),
+  /* 1) FW ↔ Core */
+  if (dual) {
+    rows.push({
+      devA: 'FW-01',           ifA: 'GE0/1 + GE0/2 (Po1)',
+      devB: 'CORE-SW-01',      ifB: `${ifaceCoreShort(47)} + ${ifaceCoreShort(48)} (Po1)`,
+      type: 'LACP (Dual-Link)',
+      vlans: vlanIds,
+    });
+  } else {
+    rows.push({
+      devA: 'FW-01',           ifA: 'GE0/1',
+      devB: 'CORE-SW-01',      ifB: ifaceCoreShort(48),
+      type: 'Trunk single',
+      vlans: vlanIds,
     });
   }
 
-  const floorVlans = (fl) => S.vlans.filter(v =>
-    v.floor === 'all' || (v.floor === 'core' && fl === S.core_piso)
-  );
-
-  const chipW = 28, chipGap = 4;
-
-  function node(x, y, w, h, fill, stroke, label, sub, sw = 1.5) {
-    return `
-      <rect x="${x - w/2}" y="${y - h/2}" width="${w}" height="${h}" rx="6"
-        fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>
-      <text x="${x}" y="${y - 2}" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif"
-        font-size="11" font-weight="600" fill="${stroke}">${esc(label)}</text>
-      ${sub ?
-        `<text x="${x}" y="${y+12}" text-anchor="middle" font-family="monospace"
-        font-size="9.5" fill="${CLR.muted}">${esc(sub)}</text>` : ''}`;
+  /* 2) Core ↔ cada SW-ACC (uno por piso ≠ Core) */
+  const accFloors = [];
+  for (let f = 1; f <= S.pisos; f++) {
+    if (f !== S.core_piso) accFloors.push(f);
   }
 
-  function link(x1, y1, x2, y2, isDual = dual) {
-    if (!isDual) {
-      return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
-        stroke="${CLR.borderStrong}" stroke-width="1.6"/>`;
+  accFloors.forEach((floor, idx) => {
+    const accUplinkLast = S.puertos;
+    const accUplinkPrev = S.puertos - 1;
+
+    if (dual) {
+      const corePort1 = idx * 2 + 1;
+      const corePort2 = idx * 2 + 2;
+      const poN       = idx + 2;
+      rows.push({
+        devA: 'CORE-SW-01',
+        ifA:  `${ifaceCoreShort(corePort1)} + ${ifaceCoreShort(corePort2)} (Po${poN})`,
+        devB: `SW-ACC-P${floor}`,
+        ifB:  `${ifaceShort(0, accUplinkPrev)} + ${ifaceShort(0, accUplinkLast)} (Po1)`,
+        type: 'LACP (Dual-Link)',
+        vlans: vlanIds,
+      });
+    } else {
+      const corePort = idx + 1;
+      rows.push({
+        devA: 'CORE-SW-01',
+        ifA:  ifaceCoreShort(corePort),
+        devB: `SW-ACC-P${floor}`,
+        ifB:  ifaceShort(0, accUplinkLast),
+        type: 'Trunk single',
+        vlans: vlanIds,
+      });
     }
-    const dx = x2 - x1, dy = y2 - y1;
-    const len = Math.sqrt(dx*dx + dy*dy) || 1;
-    const offX = (-dy / len) * 3;
-    const offY = (dx / len) * 3;
-    const mx = (x1 + x2) / 2;
-    const my = (y1 + y2) / 2;
-    return `
-      <line x1="${x1+offX}" y1="${y1+offY}" x2="${x2+offX}" y2="${y2+offY}"
-        stroke="${CLR.accent}" stroke-width="1.4"/>
-      <line x1="${x1-offX}" y1="${y1-offY}" x2="${x2-offX}" y2="${y2-offY}"
-        stroke="${CLR.accent}" stroke-width="1.4"/>
-      <rect x="${mx-16}" y="${my-7}" width="32" height="14" rx="3"
-        fill="#fff" stroke="${CLR.accent}" stroke-width="0.8"/>
-      <text x="${mx}" y="${my+3}" text-anchor="middle" font-family="monospace"
-        font-size="8" font-weight="600" fill="${CLR.accent}">LACP</text>`;
+  });
+
+  return rows;
+}
+
+
+/**
+ * Pinta la tabla de conexiones físicas en el contenedor #connections-table.
+ * Llamada desde renderSummary().
+ */
+function renderConnectionsTable() {
+  const wrap = document.getElementById('connections-table');
+  if (!wrap) return;
+
+  const rows = buildConnectionsTable();
+  if (!rows.length) {
+    wrap.innerHTML = '<p class="placeholder-msg">La tabla se genera al calcular el plan</p>';
+    return;
   }
 
-  let svg = '';
+  const isCisco = S.vendor === 'cisco';
+  const ifaceCol = isCisco ? 'Interfaz Cisco' : 'Interfaz Huawei';
 
-  svg += `<line x1="${cx}" y1="${inetY+inetH/2}" x2="${cx}" y2="${fwY-fwH/2}"
-    stroke="${CLR.borderStrong}" stroke-width="1.6"/>`;
-  svg += `<line x1="${cx}" y1="${fwY+fwH/2}" x2="${cx}" y2="${coreY-coreH/2}"
-    stroke="${CLR.borderStrong}" stroke-width="1.6"/>`;
-
-  swPos.forEach(sp => {
-    if (sp.isCore) return;
-    svg += link(cx, coreY + coreH/2, sp.x, sp.y - swH/2);
-  });
-
-  svg += node(cx, inetY, 130, inetH, CLR.warnBg, '#f59e0b',
-    'INTERNET / WAN',
-    S.wan_nexthop ? `Next-hop: ${S.wan_nexthop}` : '');
-
-  svg += node(cx, fwY, 170, fwH, CLR.errBg, '#f87171',
-    'FIREWALL — FW-01',
-    `IP Gestión: ${getFWip()}`);
-
-  svg += node(cx, coreY, 220, coreH, CLR.accentLt, CLR.accentDk,
-    'CORE SWITCH L3',
-    `${S.vlans.length} SVIs · ${getCoreIP()} · Piso ${S.core_piso}`, 2);
-
-  svg += `<text x="${cx}" y="${coreY - coreH/2 - 8}" text-anchor="middle"
-    font-size="9" fill="${CLR.muted}" font-family="monospace">
-    Inter-VLAN via SVIs · Default → FW · ${dual ?
-    'Uplinks LACP (2x)' : 'Uplinks Single-Link'}</text>`;
-
-  swPos.forEach(sp => {
-    const vstk     = floorVlans(sp.floor);
-    const isCore   = sp.isCore;
-    const fill     = isCore ? CLR.accentLt : CLR.bg;
-    const stroke   = isCore ? CLR.accent   : CLR.borderStrong;
-    const lbl      = isCore ? `SW-CORE (P${sp.floor})` : `SW-ACC-P${sp.floor}`;
-    const subLbl   = isCore
-      ? 'Core L3 + Access'
-      : `${swPerPiso} switch${swPerPiso > 1 ? 'es' : ''} · L2`;
-
-    svg += node(sp.x, sp.y, colW - 16, swH, fill, stroke, lbl, subLbl, isCore ? 2 : 1.5);
-
-    const chipsStartX = sp.x - colW/2 + 4;
-    const chipsStartY = sp.y + swH/2 + 12;
-    vstk.forEach((v, vi) => {
-      const r   = Math.floor(vi / chipsPerRow);
-      const c   = vi % chipsPerRow;
-      const cx2 = chipsStartX + c * (chipW + chipGap);
-      const cy2 = chipsStartY + r * (chipH + 4);
-      const clr = TYPE_CLR[v.type] || CLR.muted;
-      svg += `<rect x="${cx2}" y="${cy2}" width="${chipW}" height="${chipH}" rx="3"
-        fill="${clr}33" stroke="${clr}" stroke-width="1"/>
-        <text x="${cx2 + chipW/2}" y="${cy2 + chipH/2 + 3}" text-anchor="middle"
-          font-family="monospace" font-size="8.5" font-weight="700" fill="${clr}">V${v.id}</text>`;
-    });
-
-    svg += `<line x1="${sp.x}" y1="${sp.y + swH/2}" x2="${sp.x}" y2="${chipsStartY - 2}"
-      stroke="${CLR.border}" stroke-width="1" stroke-dasharray="2,2"/>`;
-  });
-
-  const usedTypes = [...new Set(S.vlans.map(v => v.type))];
-  const legendY   = svgH - legendH;
-  let legend      = '';
-  usedTypes.forEach((t, i) => {
-    const lx = margin + i * 95;
-    const clr = TYPE_CLR[t] || CLR.muted;
-    legend += `<rect x="${lx}" y="${legendY + 8}" width="11" height="11" rx="2"
-      fill="${clr}1a" stroke="${clr}" stroke-width="0.8"/>
-      <text x="${lx + 16}" y="${legendY + 17}" font-size="9.5"
-        fill="${CLR.text}" font-family="sans-serif">${esc(t)}</text>`;
-  });
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${svgW} ${svgH}"
-    width="${svgW}" height="${svgH}" preserveAspectRatio="xMidYMid meet">
-    <rect width="${svgW}" height="${svgH}" fill="#fbfcfd" rx="12"/>
-    <text x="${margin}" y="26" font-family="'DM Mono',monospace"
-      font-size="14" font-weight="600" fill="${CLR.accent}">
-      Topología Lógica — ${esc(S.domain)}</text>
-    <text x="${margin}" y="42" font-family="sans-serif" font-size="10" fill="${CLR.muted}">
-      Red base: ${S.net ? S.net.address+'/'+S.net.prefix : '—'} ·
-      ${S.ipv6 ? 'Dual Stack (IPv4+IPv6)' : 'IPv4'} ·
-      ${dual ? 'Redundancia: Dual-Link LACP' : 'Redundancia: Single-Link'} ·
-      ${pisos} piso${pisos !== 1 ? 's' : ''} · ${S.vlans.length} VLAN${S.vlans.length !== 1 ? 's' : ''}</text>
-    ${svg}
-    ${legend}
-  </svg>`;
+  wrap.innerHTML = `
+    <div class="table-wrap">
+      <table class="connections-table">
+        <thead>
+          <tr>
+            <th>Dispositivo A</th>
+            <th>${ifaceCol} A</th>
+            <th>Dispositivo B</th>
+            <th>${ifaceCol} B</th>
+            <th>Tipo de enlace</th>
+            <th>VLANs trunk</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr>
+              <td class="td-dev">${escHtml(r.devA)}</td>
+              <td class="mono">${escHtml(r.ifA)}</td>
+              <td class="td-dev">${escHtml(r.devB)}</td>
+              <td class="mono">${escHtml(r.ifB)}</td>
+              <td>${escHtml(r.type)}</td>
+              <td class="mono small">${escHtml(r.vlans)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    <p class="connections-note no-print">
+      📐 <strong>Topología visual editable:</strong>
+      exporta el archivo <code>.drawio</code> en el Paso 6 y ábrelo en
+      <a href="https://app.diagrams.net" target="_blank" rel="noopener">app.diagrams.net</a>
+      para editar o exportar como PNG/SVG/PDF.
+    </p>`;
 }
+
+
 
 function generateDrawioXML() {
   if (!S.vlans.length) return '';
@@ -2775,6 +2728,23 @@ async function exportPlanExcel() {
   }
   XLSX.utils.book_append_sheet(wb, wsSrv, 'Servicios');
 
+  /* ── Hoja 8: Conexiones físicas (NUEVO v4.6.1) ── */
+  const conns = buildConnectionsTable();
+  if (conns.length > 0) {
+    const connHead = [
+      'Dispositivo A', 'Interfaz A',
+      'Dispositivo B', 'Interfaz B',
+      'Tipo de enlace', 'VLANs trunk',
+    ];
+    const connRows = conns.map(c => [c.devA, c.ifA, c.devB, c.ifB, c.type, c.vlans]);
+    const wsConn   = XLSX.utils.aoa_to_sheet([connHead, ...connRows]);
+    wsConn['!cols'] = [{wch:18},{wch:30},{wch:18},{wch:30},{wch:18},{wch:30}];
+    wsConn['!freeze'] = { xSplit: 0, ySplit: 1 };
+    wsConn['!autofilter'] = { ref: `A1:F${connRows.length + 1}` };
+    styleHeader(wsConn, 0, connHead.length, 'FF7C3AED');
+    XLSX.utils.book_append_sheet(wb, wsConn, 'Conexiones');
+  }
+
   /* Escribir y descargar */
   XLSX.writeFile(wb, _fileName('xlsx'));
   showToast('Excel exportado correctamente', 'success');
@@ -2991,8 +2961,8 @@ function resetApp() {
   if (tb) tb.innerHTML = '';
   const ec = document.getElementById('export-blocks');
   if (ec) ec.innerHTML = '<p class="placeholder-msg">Selecciona un vendor para ver las configuraciones</p>';
-  const tp = document.getElementById('topo-preview');
-  if (tp) tp.innerHTML = '<p class="placeholder-msg" style="padding:24px 0">La topología se genera al calcular el plan</p>';
+  const ct = document.getElementById('connections-table');
+  if (ct) ct.innerHTML = '<p class="placeholder-msg" style="padding:24px 0">La tabla se genera al calcular el plan</p>';
 
   document.getElementById('vlan-form')?.classList.add('hidden');
   document.getElementById('export-zip-bar')?.classList.add('hidden');
@@ -3434,7 +3404,7 @@ async function refreshCloudPlansList() {
           <span class="cloud-plan-meta">${p.vlanCount} VLAN${p.vlanCount !== 1 ? 's' : ''} · ${updated}</span>
         </div>
         <div class="cloud-plan-actions">
-          <button class="btn-cloud-action" onclick="cloudLoadPlan('${p.id}')">↓ Cargar</button>
+          <button class="btn-cloud-action" onclick="cloudLoadPlan('${p.id}')" title="Cargar este plan">↓</button>
           <button class="btn-cloud-action btn-cloud-rename" onclick="cloudRenamePlan('${p.id}','${escapeHTML(p.name).replace(/'/g, "\\'")}')">✎</button>
           <button class="btn-cloud-action btn-cloud-delete" onclick="cloudDeletePlan('${p.id}','${escapeHTML(p.name).replace(/'/g, "\\'")}')">✕</button>
         </div>`;

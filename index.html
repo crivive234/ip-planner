@@ -476,7 +476,7 @@
       <section class="step-content" id="step-4">
         <div class="step-header">
           <h2 class="step-title">Resumen del plan</h2>
-          <p class="step-desc">Tabla VLSM · Enrutamiento documentado · Topología lógica</p>
+          <p class="step-desc">Tabla VLSM · Enrutamiento documentado · Conexiones físicas</p>
         </div>
 
         <!-- Métricas -->
@@ -514,15 +514,12 @@
           </table>
         </div>
 
-        <!-- Topología SVG inline -->
+        <!-- NUEVO v4.6.1 — Tabla de conexiones físicas (reemplaza SVG topology) -->
         <div style="margin-top:var(--gap-lg)">
-          <span class="group-label">Topología lógica</span>
-          <div id="topo-preview"
-               style="background:var(--bg-surface);border:1px solid var(--border);
-                      border-radius:var(--radius-md);padding:12px;
-                      overflow-x:auto;margin-top:8px">
+          <span class="group-label">Conexiones físicas entre dispositivos</span>
+          <div id="connections-table" style="margin-top:8px">
             <p class="placeholder-msg" style="padding:24px 0">
-              La topología se genera al calcular el plan
+              La tabla se genera al calcular el plan
             </p>
           </div>
         </div>
@@ -531,7 +528,7 @@
         <p class="print-hint no-print" style="font-size:11px;color:var(--text-muted);margin-top:var(--gap);line-height:1.7">
           <strong>💡 Tip:</strong> Para imprimir o guardar este resumen como PDF, usa
           <kbd>Ctrl</kbd>+<kbd>P</kbd> (Windows/Linux) o <kbd>⌘</kbd>+<kbd>P</kbd> (Mac).
-          El navegador exportará solo las métricas, tabla VLSM y topología — sin sidebar ni botones.
+          El navegador exportará solo las métricas, tabla VLSM y tabla de conexiones — sin sidebar ni botones.
         </p>
       </section><!-- /step-4 -->
 

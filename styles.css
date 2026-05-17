@@ -1070,6 +1070,64 @@ body.cloud-ready .cloud-only { display: inline-flex; }
 .vlsm-table tbody tr:last-child td { border-bottom: none; }
 .vlsm-table tbody tr:hover td { background: var(--bg-hover); }
 
+/* NUEVO v4.6.1 — Tabla de conexiones físicas */
+.connections-table {
+  width:           100%;
+  border-collapse: collapse;
+  font-size:       12px;
+  white-space:     nowrap;
+}
+.connections-table th {
+  text-align:     left;
+  padding:        9px 12px;
+  font-size:      11px;
+  font-weight:    600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color:          var(--text-muted);
+  background:     var(--bg-surface);
+  border-bottom:  2px solid var(--border);
+}
+.connections-table td {
+  padding:        9px 12px;
+  border-bottom:  1px solid var(--border);
+  color:          var(--text-secondary);
+}
+.connections-table td.td-dev {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color:       var(--accent);
+}
+.connections-table td.mono { font-family: var(--font-mono); }
+.connections-table td.mono.small { font-size: 11px; }
+.connections-table tbody tr:last-child td { border-bottom: none; }
+.connections-table tbody tr:hover td { background: var(--bg-hover); }
+
+.connections-note {
+  margin-top:    var(--gap);
+  padding:       10px 14px;
+  font-size:     12px;
+  color:         var(--text-secondary);
+  background:    var(--accent-light);
+  border:        1px dashed #c2d7f0;
+  border-radius: var(--radius-md);
+  line-height:   1.7;
+}
+.connections-note code {
+  font-family:    var(--font-mono);
+  font-size:      11.5px;
+  padding:        1px 6px;
+  background:     var(--bg-panel);
+  border:         1px solid var(--border);
+  border-radius:  4px;
+}
+.connections-note a {
+  color:           var(--accent);
+  text-decoration: none;
+  font-weight:     500;
+}
+.connections-note a:hover { text-decoration: underline; }
+
 /* NUEVO v4.6 — Tip de impresión */
 .print-hint {
   padding:       10px 14px;
@@ -2087,20 +2145,36 @@ body.cloud-ready .cloud-only { display: inline-flex; }
     page-break-inside: avoid;
   }
 
-  /* Topología: forzar a caber en el ancho */
-  #topo-preview {
-    page-break-before: auto;
-    page-break-inside: avoid;
-    border: 0.5pt solid #999 !important;
-    background: #fff !important;
-    padding: 8pt !important;
+  /* NUEVO v4.6.1 — Tabla de conexiones físicas en impresión */
+  .connections-table {
+    font-size: 8.5pt !important;
+    white-space: normal !important;
+    page-break-inside: auto;
   }
-  #topo-preview svg {
-    max-width: 100% !important;
-    height: auto !important;
+  .connections-table thead {
+    display: table-header-group;
+  }
+  .connections-table th {
+    background: #e0e0e0 !important;
+    color: #000 !important;
+    border-bottom: 1pt solid #000 !important;
+    padding: 5pt 6pt !important;
+    font-size: 7.5pt !important;
+  }
+  .connections-table td {
+    color: #222 !important;
+    padding: 5pt 6pt !important;
+    border-bottom: 0.3pt solid #aaa !important;
+  }
+  .connections-table tbody tr {
+    page-break-inside: avoid;
+  }
+  /* La nota de drawio no se imprime */
+  .connections-note {
+    display: none !important;
   }
 
-  /* Encabezado de sección topología */
+  /* Encabezado de sección */
   .group-label {
     font-size: 10pt !important;
     color: #000 !important;
