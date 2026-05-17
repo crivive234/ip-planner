@@ -1,52 +1,67 @@
-'use strict';
-
 /*
  * ╔══════════════════════════════════════════════════════════════╗
- * ║  NetPlan Pro v4.0 — script.js                               ║
+ * ║  NetPlan Pro v4.6 — script.js                                ║
+ * ║                                                              ║
+ * ║  Cambios v4.6 (Paso 6 reorganizado + SW-ACC + Hardening L2): ║
+ * ║   · Generadores Cisco/Huawei devuelven array de bloques      ║
+ * ║     por dispositivo: CORE + SW-ACC-PN + FW (referencial).    ║
+ * ║   · SW-ACC L2 reales con uplink trunk al Core, port-security ║
+ * ║     y bpduguard configurables vía toggle "Hardening L2".     ║
+ * ║   · Render del Paso 6 por bloques: cada uno con Copiar       ║
+ * ║     y Descargar .txt, más botón global Descargar todo (.zip).║
+ * ║   · Excel robustecido a 7 hojas con estilos.                 ║
+ * ║   · Eliminado: PDF, Mermaid, HTML completo.                  ║
+ * ║   · Modal de finalizar con 3 opciones (guardar/quedarse,     ║
+ * ║     guardar/nuevo, descartar/nuevo con confirmación).        ║
  * ║                                                              ║
  * ║  Secciones:                                                  ║
- * ║    1.  Estado global (S)                                     ║
+ * ║    1.  Estado global                                         ║
  * ║    2.  Constantes                                            ║
  * ║    3.  Utilidades IPv4                                       ║
  * ║    4.  Utilidades IPv6                                       ║
  * ║    5.  Validaciones de formulario                            ║
- * ║    6.  Paso 1 — Infraestructura (selects)                    ║
+ * ║    6.  Paso 1 — Infraestructura                              ║
  * ║    7.  Paso 2 — Análisis IPv4                                ║
- * ║    8.  Paso 3 — Servicios de red                             ║
+ * ║    8.  Paso 3 — Servicios                                    ║
  * ║    9.  Paso 4 — Plan y gestión de VLANs                      ║
  * ║   10.  Paso 4 — Render tarjetas VLAN                         ║
- * ║   11.  Paso 5 — Render tabla VLSM                            ║
- * ║   12.  Generador Cisco IOS/XE                                ║
- * ║   13.  Generador Huawei VRP                                  ║
- * ║   14.  Paso 6 — Exportar                                     ║
+ * ║   10b. IPs de reserva por VLAN                               ║
+ * ║   11.  Paso 5 — Resumen y tabla VLSM                         ║
+ * ║   12.  Generador Cisco IOS/XE (por dispositivo)              ║
+ * ║   13.  Generador Huawei VRP (por dispositivo)                ║
+ * ║   13b. Generador Fortinet FortiOS                            ║
+ * ║   14.  Paso 6 — Exportar (bloques, copy, txt, zip)           ║
+ * ║   14b. Rollback / borrado seguro                             ║
+ * ║   14c. Topología SVG + Drawio                                ║
+ * ║   14d. Exportaciones (Excel, JSON, Drawio)                   ║
  * ║   15.  Navegación del wizard                                 ║
- * ║   16.  Panel lateral, toast y modal                          ║
- * ║   17.  Inicialización                                        ║
+ * ║   16.  Panel lateral, toast y modal de finalizar             ║
+ * ║   17.  Persistencia (JSON, autoguardado)                     ║
+ * ║   18.  Nube — UI y handlers de Firebase                      ║
+ * ║   19.  Inicialización                                        ║
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
 
 /* ══════════════════════════════════════════════════════════════
    1. ESTADO GLOBAL
-   Único punto de verdad para toda la aplicación.
-   Los selects de pisos y core arrancan con valor válido (3 y 1)
-   → corrige el bug donde S.pisos/S.core_piso eran null al inicio.
    ══════════════════════════════════════════════════════════════ */
 const S = {
   /* Paso 1 */
-  pisos:       3,           // siempre válido: initializado desde default del select
-  core_piso:   1,           // siempre válido: initializado desde default del select
-  hosts_piso:  null,        // único campo de paso 1 que requiere validación manual
-  puertos:     48,          // 24 | 48 — viene del select, siempre válido
-  redundancia: 'single',    // 'single' | 'dual'
-  vendor:      'cisco',     // 'cisco' | 'huawei'
+  pisos:       3,
+  core_piso:   1,
+  hosts_piso:  null,
+  puertos:     48,
+  redundancia: 'single',
+  vendor:      'cisco',
+  growth_factor: 2,
 
-  /* Paso 1 — factor de crecimiento */
-  growth_factor: 2,         // 1.5 | 2 | 3 — multiplicador sobre hosts totales
+  /* NUEVO v4.6 — Hardening L2 básico */
+  hardening_l2: true,    // port-security + bpduguard en SW-ACC
 
   /* Paso 2 */
-  net:      null,           // resultado del análisis: { address, prefix, mask, ... }
-  override: '',             // CIDR personalizado (vacío = usar automática)
+  net:      null,
+  override: '',
 
   /* Paso 3 */
   dns4:        '8.8.8.8',
@@ -54,21 +69,21 @@ const S = {
   ntp:         'pool.ntp.org',
   domain:      'corp.local',
   ipv6:        true,
-  wan_nexthop: '',          // IPv4 del equipo de borde WAN (opcional)
-  wan_routes:  [],          // CIDRs de redes remotas — rutas estáticas adicionales
+  wan_nexthop: '',
+  wan_routes:  [],
 
   /* VLANs */
-  vlan_defs: [],            // definiciones editables por el usuario
-  vlans:     [],            // resultados VLSM calculados (incluye network, mask, etc.)
-  ula_prefix: '',           // prefijo ULA /48 derivado de la red base
+  vlan_defs: [],
+  vlans:     [],
+  ula_prefix: '',
 
   /* UI */
   step:             0,
-  export_vendor:    'cisco',   // tab activo en paso 6
-  rollback_vendor:  'cisco',   // sub-selector dentro de pestaña Borrado Seguro
-  vlan_edit_id:     null,      // ID de VLAN siendo editada (null = nueva)
-  reserve_expanded: {},        // mapa vlanId → boolean (sección IPs de reserva abierta)
-  cloud_plan_id:    null,      // ID del plan en Firestore si fue cargado/guardado en nube
+  export_vendor:    'cisco',
+  rollback_vendor:  'cisco',
+  vlan_edit_id:     null,
+  reserve_expanded: {},
+  cloud_plan_id:    null,
 };
 
 
@@ -76,13 +91,6 @@ const S = {
    2. CONSTANTES
    ══════════════════════════════════════════════════════════════ */
 
-/*
- * Plantillas de VLANs predeterminadas para entorno corporativo.
- *   hosts_factor: fracción del total de hosts para esa VLAN
- *   min_hosts:    mínimo garantizado independientemente del factor
- *   floor:        'all' = todos los pisos | 'core' = solo piso Core
- *   type / badge: afectan el estilo visual de la tarjeta
- */
 const VLAN_TEMPLATES = [
   { id: 10, name: 'Usuarios',       type: 'users',   floor: 'all',  badge: 'blue',  hosts_factor: 0.70, min_hosts: 10 },
   { id: 20, name: 'Administración', type: 'admin',   floor: 'core', badge: 'green', hosts_factor: 0.10, min_hosts: 10 },
@@ -92,14 +100,12 @@ const VLAN_TEMPLATES = [
   { id: 60, name: 'Gestión',        type: 'mgmt',    floor: 'all',  badge: 'amber', hosts_factor: 0.00, min_hosts: 0  },
 ];
 
-/* Rangos RFC 1918 — se selecciona según el prefijo calculado */
 const RFC1918 = [
   { network: '192.168.0.0', min_prefix: 16 },
   { network: '172.16.0.0',  min_prefix: 12 },
   { network: '10.0.0.0',    min_prefix:  1 },
 ];
 
-/* Badge por tipo de VLAN — usado al crear una VLAN personalizada */
 const TYPE_BADGE = {
   users: 'blue', admin: 'green', servers: 'green',
   voip: 'blue',  mgmt: 'amber', wifi: 'purple', custom: 'blue',
@@ -110,35 +116,26 @@ const TYPE_BADGE = {
    3. UTILIDADES IPv4
    ══════════════════════════════════════════════════════════════ */
 
-/** Convierte IP "x.x.x.x" → entero de 32 bits sin signo. */
 function ipToInt(ip) {
   return ip.split('.').reduce((acc, o) => (acc << 8) + parseInt(o, 10), 0) >>> 0;
 }
 
-/** Convierte entero de 32 bits → IP "x.x.x.x". */
 function intToIp(n) {
   return [(n>>>24)&255, (n>>>16)&255, (n>>>8)&255, n&255].join('.');
 }
 
-/** Devuelve la máscara de subred para un prefijo dado. */
 function prefixToMask(prefix) {
   return intToIp(prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0);
 }
 
-/** Hosts utilizables (usables) para un prefijo dado. */
 function usableHosts(prefix) {
   return Math.pow(2, 32 - prefix) - 2;
 }
 
-/**
- * Prefijo mínimo que cubre hostsRequired.
- * El +2 reserva dirección de red y broadcast desde el inicio.
- */
 function minPrefix(hostsRequired) {
   return 32 - Math.ceil(Math.log2(hostsRequired + 2));
 }
 
-/** Selecciona el rango RFC 1918 adecuado según el prefijo. */
 function selectBaseNetwork(prefix) {
   for (const r of RFC1918) {
     if (prefix >= r.min_prefix) return r.network;
@@ -146,10 +143,6 @@ function selectBaseNetwork(prefix) {
   return '10.0.0.0';
 }
 
-/**
- * Parsea y valida una cadena CIDR "x.x.x.x/n".
- * Devuelve { address, prefix } o null si es inválido.
- */
 function parseCIDR(cidr) {
   const m = cidr.trim().match(
     /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/
@@ -162,12 +155,6 @@ function parseCIDR(cidr) {
   return { address: octs.join('.'), prefix };
 }
 
-/**
- * Asigna subredes VLSM al array de VLANs.
- * Ordena de mayor a menor para minimizar fragmentación,
- * luego asigna secuencialmente desde baseAddress.
- * Modifica el array en su lugar añadiendo campos de red a cada VLAN.
- */
 function allocateVLSM(baseAddress, vlans) {
   const sorted = [...vlans].sort((a, b) => b.hosts_required - a.hosts_required);
   let current  = ipToInt(baseAddress);
@@ -176,7 +163,6 @@ function allocateVLSM(baseAddress, vlans) {
     const prefix    = minPrefix(vlan.hosts_required);
     const blockSize = Math.pow(2, 32 - prefix);
 
-    /* Buscar el objeto original en el array para modificarlo */
     const target = vlans.find(v => v.id === vlan.id);
     target.prefix       = prefix;
     target.mask         = prefixToMask(prefix);
@@ -195,29 +181,18 @@ function allocateVLSM(baseAddress, vlans) {
    4. UTILIDADES IPv6
    ══════════════════════════════════════════════════════════════ */
 
-/**
- * Deriva el prefijo ULA /48 desde la red IPv4 base.
- * Fórmula: fd + hex(oct1) + hex(oct2) : hex(oct3) + hex(oct4) + 00 :: /48
- * Ejemplo: 192.168.0.0 → fdc0:a800:0000::/48
- */
 function calcULAPrefix(ipv4Address) {
   const p = ipv4Address.split('.').map(Number);
   const h = p.map(o => o.toString(16).padStart(2, '0'));
   return `fd${h[0]}:${h[1]}${h[2]}:${h[3]}00::/48`;
 }
 
-/**
- * Subred /64 para una VLAN dado el prefijo ULA /48.
- * Usa el ID de VLAN en hex de 4 dígitos como tercer grupo.
- * Ejemplo: VLAN 10 → fdc0:a800:0000:000a::/64
- */
 function calcV6Subnet(ula48, vlanId) {
   const site    = ula48.replace('::/48', '');
   const vlanHex = vlanId.toString(16).padStart(4, '0');
   return `${site}:${vlanHex}::/64`;
 }
 
-/** Gateway IPv6 de una VLAN (::1 en la subred /64). */
 function calcV6Gateway(ula48, vlanId) {
   const site    = ula48.replace('::/48', '');
   const vlanHex = vlanId.toString(16).padStart(4, '0');
@@ -229,22 +204,18 @@ function calcV6Gateway(ula48, vlanId) {
    5. VALIDACIONES DE FORMULARIO
    ══════════════════════════════════════════════════════════════ */
 
-/** Bloquea e, E, +, - en inputs numéricos. */
 function blockInvalidNumKeys(e) {
   if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault();
 }
 
-/** Añade/quita la clase .invalid a un campo por su ID. */
 function setFieldValidity(fieldId, isValid) {
   document.getElementById(fieldId)?.classList.toggle('invalid', !isValid);
 }
 
-/** Regex IPv4 estricta: cada octeto 0–255. */
 function isValidIPv4(str) {
   return /^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)$/.test(str.trim());
 }
 
-/** Validación básica de IPv6: contiene ':' y solo hex/':'. */
 function isValidIPv6(str) {
   const s = str.trim();
   if (!s.includes(':')) return false;
@@ -252,32 +223,20 @@ function isValidIPv6(str) {
   return /^[0-9a-fA-F:]+$/.test(s) && s.length >= 2;
 }
 
-/** IPv4 válida o hostname con al menos un punto (para NTP). */
 function isValidIPv4orHostname(str) {
   const s = str.trim();
   if (isValidIPv4(s)) return true;
   return /^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)+$/.test(s);
 }
 
-/** Dominio interno: formato nombre.tld, sin espacios. */
 function isValidDomain(str) {
   return /^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)+$/.test(str.trim());
 }
 
-/**
- * Valida todos los campos de un paso y habilita/deshabilita btn-next.
- * Retorna true si el paso es válido.
- *
- * CORRECCIÓN DEL BUG:
- *   Paso 0: S.pisos y S.core_piso son SIEMPRE válidos porque vienen de
- *   selects con valores por defecto. Solo se valida inp-hosts.
- *   Antes ambos eran null al inicio → botón bloqueado permanentemente.
- */
 function validateStep(step) {
   let valid = false;
 
   if (step === 0) {
-    /* Ahora pisos y core_piso vienen de inputs numéricos: hay que validarlos */
     const pisosOk = S.pisos     !== null && S.pisos     >= 1 && S.pisos     <= 50;
     const maxCore = S.pisos || 50;
     const coreOk  = S.core_piso !== null && S.core_piso >= 1 && S.core_piso <= maxCore;
@@ -286,7 +245,6 @@ function validateStep(step) {
   }
 
   if (step === 1) {
-    /* override vacío = válido; si tiene contenido debe ser CIDR correcto */
     const ov = document.getElementById('inp-override')?.value?.trim() || '';
     valid = ov === '' || parseCIDR(ov) !== null;
   }
@@ -303,7 +261,6 @@ function validateStep(step) {
     valid = d4Ok && d6Ok && ntpOk && domOk && nhOk && rtOk;
   }
 
-  /* Pasos 3, 4, 5: siempre habilitados */
   if (step >= 3) valid = true;
 
   const btn = document.getElementById('btn-next');
@@ -316,7 +273,6 @@ function validateStep(step) {
    6. PASO 1 — INFRAESTRUCTURA
    ══════════════════════════════════════════════════════════════ */
 
-/** Activa un botón en un toggle-group y actualiza el estado. */
 function selectToggle(groupId, btn) {
   document.querySelectorAll(`#${groupId} .toggle-btn`).forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
@@ -328,7 +284,6 @@ function selectToggle(groupId, btn) {
   autosave();
 }
 
-/** Selecciona vendor y actualiza estado + panel lateral. */
 function selectVendor(btn) {
   document.querySelectorAll('#tg-vendor .vendor-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
@@ -337,13 +292,6 @@ function selectVendor(btn) {
   autosave();
 }
 
-/**
- * Maneja el cambio en el input numérico de pisos.
- * - Valida rango 1–50.
- * - Actualiza dinámicamente el atributo max del input de core.
- * - Si el core actual excede los nuevos pisos, lo ajusta automáticamente.
- * - Resetea vlan_defs para que se recalculen con los nuevos pisos.
- */
 function onPisosChange() {
   const inpPisos = document.getElementById('inp-pisos');
   const inpCore  = document.getElementById('inp-core');
@@ -351,48 +299,36 @@ function onPisosChange() {
   const pisosVal = parseInt(raw, 10);
   const pisosOk  = !isNaN(pisosVal) && pisosVal >= 1 && pisosVal <= 50;
 
-  /* El campo vacío también marca como inválido (sin mostrar error rojo) */
   setFieldValidity('field-pisos', pisosOk || raw === '');
 
   if (pisosOk) {
     S.pisos = pisosVal;
-
-    /* Actualizar restricción del input de core */
     inpCore.max = pisosVal;
     const hint = document.getElementById('hint-core');
     if (hint) hint.textContent = `Rango: 1 – ${pisosVal} (debe ser ≤ número de pisos)`;
     const errMsg = document.getElementById('error-core');
     if (errMsg) errMsg.textContent = `Debe estar entre 1 y ${pisosVal}`;
 
-    /* Si el core actual ya no cabe en el nuevo rango, ajustarlo al máximo permitido */
     const coreVal = parseInt(inpCore.value, 10);
     if (!isNaN(coreVal) && coreVal > pisosVal) {
       inpCore.value = pisosVal;
     }
-
-    /* Forzar recálculo de VLANs con los nuevos pisos */
     S.vlan_defs = [];
   } else {
     S.pisos = null;
   }
 
-  /* Re-validar core porque su max pudo haber cambiado */
   validateCoreInput();
   validateStep(0);
   autosave();
 }
 
-/** Maneja el cambio en el input numérico del piso del Core / CPD. */
 function onCoreChange() {
   validateCoreInput();
   validateStep(0);
   autosave();
 }
 
-/**
- * Valida el input del Core respetando el rango dinámico [1, S.pisos].
- * Encapsulado para poder llamarlo desde onPisosChange y onCoreChange.
- */
 function validateCoreInput() {
   const inpCore = document.getElementById('inp-core');
   const raw     = inpCore.value.trim();
@@ -405,22 +341,14 @@ function validateCoreInput() {
   S.core_piso = coreOk ? coreVal : null;
 }
 
-/**
- * Actualiza S.growth_factor al cambiar el selector de crecimiento.
- * Resetea vlan_defs para que se recalculen con el nuevo factor.
- */
 function onGrowthChange() {
   S.growth_factor = parseFloat(document.getElementById('sel-growth').value);
-  S.vlan_defs = [];            // fuerza recálculo de hosts por VLAN
+  S.vlan_defs = [];
   if (S.pisos && S.hosts_piso) runAnalysis();
   validateStep(0);
   autosave();
 }
 
-/**
- * Valida inp-hosts, calcula switches necesarios y actualiza el info-box.
- * Formula: Math.ceil(hosts / puertos)
- */
 function onHostsChange() {
   const hostsVal = parseInt(document.getElementById('inp-hosts').value, 10);
   const puertos  = parseInt(document.getElementById('sel-puertos').value, 10);
@@ -453,24 +381,20 @@ function onHostsChange() {
   autosave();
 }
 
+/* NUEVO v4.6 — Toggle de hardening L2 */
+function onHardeningToggle(cb) {
+  S.hardening_l2 = cb.checked;
+  /* Re-renderizar pestaña de exportar si está visible */
+  if (S.step === 5) renderExportCode();
+  autosave();
+}
+
 
 /* ══════════════════════════════════════════════════════════════
    7. PASO 2 — ANÁLISIS IPv4
    ══════════════════════════════════════════════════════════════ */
 
-/**
- * Ejecuta el análisis de red usando los datos del Paso 1.
- * Se llama automáticamente al entrar al Paso 2.
- *
- * Fórmulas:
- *   total_hosts = hosts_piso × pisos
- *   hosts_plan  = total_hosts × growth_factor  (configurable 1.5 | 2 | 3)
- *   prefix      = 32 − ceil(log2(hosts_plan + 2))
- *   score       = round(hosts_plan / usable × 100)
- *   margin      = usable − hosts_plan
- */
 function runAnalysis() {
-  /* Guard: no calcular si el paso 1 está incompleto */
   if (!S.pisos || !S.hosts_piso) return;
 
   const totalHosts = S.hosts_piso * S.pisos;
@@ -479,12 +403,10 @@ function runAnalysis() {
   let prefix, baseAddress;
 
   if (S.override && parseCIDR(S.override)) {
-    /* El usuario especificó una red CIDR personalizada */
     const parsed = parseCIDR(S.override);
     baseAddress  = parsed.address;
     prefix       = parsed.prefix;
   } else {
-    /* Selección automática basada en el prefijo calculado */
     prefix      = minPrefix(hostsPlan);
     baseAddress = selectBaseNetwork(prefix);
   }
@@ -496,28 +418,24 @@ function runAnalysis() {
   S.net = { address: baseAddress, prefix, mask: prefixToMask(prefix),
             hosts_plan: hostsPlan, hosts_total: totalHosts, useful, margin, score };
 
-  /* Calcular prefijo ULA si IPv6 está activo */
   if (S.ipv6) {
     S.ula_prefix = calcULAPrefix(baseAddress);
     setText('ipv6-prefix', S.ula_prefix);
     setText('st-prefix', S.ula_prefix.replace('::/48', '…/48'));
   }
 
-  /* Renderizar en el DOM */
   setText('res-network', `${baseAddress} / ${prefix}`);
   setText('res-mask',    `Máscara: ${prefixToMask(prefix)} — ${useful.toLocaleString()} hosts disponibles`);
   setText('res-planned', hostsPlan.toLocaleString());
   setText('res-margin',  margin.toLocaleString());
   setText('res-score',   score);
 
-  /* Checklist */
   const isRFC = ['10.', '172.16', '192.168'].some(p => baseAddress.startsWith(p));
   toggleClass('chk-rfc',    'ok', isRFC);
   toggleClass('chk-scale',  'ok', margin > 0);
   toggleClass('chk-vlsm',   'ok', true);
   toggleClass('chk-redund', 'ok', true);
 
-  /* Panel lateral */
   setText('st-network', `${baseAddress}/${prefix}`);
   setText('st-hosts',   `${hostsPlan.toLocaleString()} (${S.growth_factor}×)`);
   setText('st-hosts-lbl', `Hosts (${S.growth_factor}×)`);
@@ -525,7 +443,6 @@ function runAnalysis() {
   setText('st-score',   score);
 }
 
-/** Valida el campo override CIDR y re-ejecuta el análisis. */
 function onOverrideChange() {
   const val = document.getElementById('inp-override')?.value?.trim() || '';
   S.override = val;
@@ -540,7 +457,6 @@ function onOverrideChange() {
    8. PASO 3 — SERVICIOS DE RED
    ══════════════════════════════════════════════════════════════ */
 
-/** Valida todos los campos de servicios y actualiza el estado. */
 function onServicesChange() {
   const dns4Val = document.getElementById('inp-dns4')?.value  || '';
   const dns6Val = document.getElementById('inp-dns6')?.value  || '';
@@ -566,7 +482,6 @@ function onServicesChange() {
   autosave();
 }
 
-/** Muestra u oculta el bloque de info IPv6. */
 function onIPv6Toggle(cb) {
   S.ipv6 = cb.checked;
   document.getElementById('ipv6-info')?.classList.toggle('hidden', !S.ipv6);
@@ -578,11 +493,6 @@ function onIPv6Toggle(cb) {
   autosave();
 }
 
-/**
- * Valida los campos WAN opcionales y actualiza el estado.
- * · wan_nexthop: IPv4 válida o vacío
- * · wan_routes:  cada línea no vacía debe ser CIDR válido (/8–/30)
- */
 function onWanChange() {
   const nhVal  = document.getElementById('inp-wan-nexthop')?.value.trim() || '';
   const rtVal  = document.getElementById('inp-wan-routes')?.value        || '';
@@ -606,17 +516,13 @@ function onWanChange() {
    9. PASO 4 — PLAN Y GESTIÓN DE VLANs
    ══════════════════════════════════════════════════════════════ */
 
-/**
- * Inicializa S.vlan_defs desde VLAN_TEMPLATES usando los datos
- * actuales de pisos y hosts. Solo se ejecuta si vlan_defs está vacío.
- */
 function initVlanDefs() {
   if (S.vlan_defs.length > 0) return;
 
   const totalHosts = S.hosts_piso * S.pisos;
   const swPerFloor  = Math.ceil(S.hosts_piso / S.puertos);
-  const apsPerFloor  = Math.ceil(S.hosts_piso / 30); // 1 AP c/30 usuarios (estándar IEEE)
-  const mgmtDevices  = swPerFloor * S.pisos + apsPerFloor * S.pisos + 3; // SW + APs + core + FW
+  const apsPerFloor  = Math.ceil(S.hosts_piso / 30);
+  const mgmtDevices  = swPerFloor * S.pisos + apsPerFloor * S.pisos + 3;
 
   S.vlan_defs = VLAN_TEMPLATES.map(t => ({
     id:             t.id,
@@ -631,28 +537,21 @@ function initVlanDefs() {
   }));
 }
 
-/** Devuelve el texto de piso según la definición de floor. */
 function calcFloorLabel(floor) {
   if (floor === 'all')  return S.pisos === 1 ? `Piso ${S.core_piso}` : `Pisos 1–${S.pisos}`;
   if (floor === 'core') return `Piso ${S.core_piso} (CPD)`;
   return `Piso ${floor}`;
 }
 
-/**
- * Construye S.vlans desde S.vlan_defs:
- *   1. Aplica VLSM (asigna network, mask, gateway, broadcast, etc.)
- *   2. Calcula subredes IPv6 si está activo.
- */
 function buildVLANPlan() {
   if (!S.net || !S.pisos || !S.hosts_piso) return;
 
   initVlanDefs();
 
-  /* Crear copia con floor_label para el render */
   S.vlans = S.vlan_defs.map(d => ({
     ...d,
     floor_label:  calcFloorLabel(d.floor),
-    reserved_ips: d.reserved_ips || [],   // preservar reservas existentes
+    reserved_ips: d.reserved_ips || [],
     prefix: null, mask: null, network: null,
     gateway_v4: null, broadcast: null, hosts_useful: null, efficiency: null,
   }));
@@ -670,14 +569,10 @@ function buildVLANPlan() {
   setText('st-blocks', S.ipv6 ? S.vlans.length : '—');
 }
 
-/* ── Funciones de gestión de VLANs ──────────────────────────── */
-
-/** Muestra el formulario en modo "agregar nueva VLAN". */
 function showAddVlanForm() {
   S.vlan_edit_id = null;
   setText('vlan-form-title', 'Nueva VLAN');
 
-  /* Limpiar campos */
   ['inp-vid', 'inp-vname', 'inp-vhosts'].forEach(id => {
     const el = document.getElementById(id);
     if (el) { el.value = ''; el.disabled = false; }
@@ -685,7 +580,6 @@ function showAddVlanForm() {
   document.getElementById('sel-vtype').value  = 'users';
   document.getElementById('sel-vfloor').value = 'all';
 
-  /* Limpiar validaciones */
   ['field-vid', 'field-vname', 'field-vhosts'].forEach(id =>
     document.getElementById(id)?.classList.remove('invalid')
   );
@@ -695,7 +589,6 @@ function showAddVlanForm() {
   document.getElementById('vlan-form').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-/** Muestra el formulario en modo "editar VLAN existente". */
 function editVlan(id) {
   const vlan = S.vlan_defs.find(v => v.id === id);
   if (!vlan) return;
@@ -704,7 +597,7 @@ function editVlan(id) {
   setText('vlan-form-title', `Editar VLAN ${id} — ${vlan.name}`);
 
   document.getElementById('inp-vid').value    = vlan.id;
-  document.getElementById('inp-vid').disabled = true; /* ID no se puede cambiar al editar */
+  document.getElementById('inp-vid').disabled = true;
   document.getElementById('inp-vname').value  = vlan.name;
   document.getElementById('inp-vhosts').value = vlan.hosts_required;
   document.getElementById('sel-vtype').value  = vlan.type;
@@ -719,7 +612,6 @@ function editVlan(id) {
   document.getElementById('vlan-form').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-/** Elimina una VLAN del plan y recalcula. */
 function deleteVlan(id) {
   if (S.vlan_defs.length <= 1) {
     showToast('El plan debe tener al menos 1 VLAN', 'error');
@@ -733,16 +625,11 @@ function deleteVlan(id) {
   autosave();
 }
 
-/** Cierra el formulario sin guardar. */
 function cancelVlanEdit() {
   document.getElementById('vlan-form').classList.add('hidden');
   S.vlan_edit_id = null;
 }
 
-/**
- * Valida el formulario de VLAN en tiempo real.
- * Habilita/deshabilita el botón "Guardar VLAN".
- */
 function validateVlanForm() {
   const idEl    = document.getElementById('inp-vid');
   const nameEl  = document.getElementById('inp-vname');
@@ -752,17 +639,11 @@ function validateVlanForm() {
   const name  = nameEl?.value?.trim() || '';
   const hosts = parseInt(hostsEl?.value, 10);
 
-  /* ID: 1–4094, único (excepto al editar el propio ID) */
   const idExists = S.vlan_defs.some(v => v.id === id && v.id !== S.vlan_edit_id);
   const idOk     = !isNaN(id) && id >= 1 && id <= 4094 && !idExists;
-
-  /* Nombre: letras, números, guion, máx. 20 caracteres */
   const nameOk   = /^[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9_\-]{1,20}$/.test(name);
-
-  /* Hosts: 2–500 */
   const hostsOk  = !isNaN(hosts) && hosts >= 2 && hosts <= 500;
 
-  /* No mostrar error en campos vacíos al inicio */
   const idTouched    = idEl?.value    !== '';
   const nameTouched  = nameEl?.value  !== '';
   const hostsTouched = hostsEl?.value !== '';
@@ -774,9 +655,6 @@ function validateVlanForm() {
   document.getElementById('btn-save-vlan').disabled = !(idOk && nameOk && hostsOk);
 }
 
-/**
- * Guarda la VLAN (nueva o editada) en S.vlan_defs y recalcula el plan.
- */
 function saveVlan() {
   const id    = parseInt(document.getElementById('inp-vid').value, 10);
   const name  = document.getElementById('inp-vname').value.trim();
@@ -786,16 +664,14 @@ function saveVlan() {
   const badge = TYPE_BADGE[type] || 'blue';
 
   if (S.vlan_edit_id !== null) {
-    /* Editar VLAN existente */
     const idx = S.vlan_defs.findIndex(v => v.id === S.vlan_edit_id);
     if (idx !== -1) {
       S.vlan_defs[idx] = { ...S.vlan_defs[idx], name, hosts_required: hosts, type, floor, badge };
     }
     showToast(`VLAN ${S.vlan_edit_id} actualizada`, 'success');
   } else {
-    /* Agregar nueva VLAN */
     S.vlan_defs.push({ id, name, type, floor, badge, hosts_required: hosts, reserved_ips: [] });
-    S.vlan_defs.sort((a, b) => a.id - b.id); /* mantener orden por ID */
+    S.vlan_defs.sort((a, b) => a.id - b.id);
     showToast(`VLAN ${id} agregada`, 'success');
   }
 
@@ -806,7 +682,6 @@ function saveVlan() {
   autosave();
 }
 
-/** Actualiza el contador de VLANs en la barra de herramientas. */
 function updateVlansCount() {
   const n = S.vlan_defs.length;
   setText('vlans-count', `${n} VLAN${n !== 1 ? 's' : ''}`);
@@ -817,7 +692,6 @@ function updateVlansCount() {
    10. PASO 4 — RENDER TARJETAS VLAN
    ══════════════════════════════════════════════════════════════ */
 
-/** Genera y renderiza las tarjetas de VLAN con botones editar/eliminar. */
 function renderVLANCards() {
   const container = document.getElementById('vlans-container');
   if (!container) return;
@@ -828,7 +702,6 @@ function renderVLANCards() {
   }
 
   container.innerHTML = S.vlans.map(v => {
-    /* ── Indicador de desbordamiento: hosts > promedio por piso ── */
     const overWarn = (S.hosts_piso && v.hosts_required > S.hosts_piso)
       ? `<span class="vlan-warn-badge" title="Los hosts requeridos (${v.hosts_required}) superan el promedio por piso (${S.hosts_piso})">⚠ Supera prom./piso</span>`
       : '';
@@ -854,27 +727,20 @@ function renderVLANCards() {
 }
 
 
-
 /* ══════════════════════════════════════════════════════════════
    10b. IPs DE RESERVA POR VLAN (Dual Stack)
    ══════════════════════════════════════════════════════════════ */
 
-/** Escapa HTML para evitar XSS en alias de usuarios. */
 function escHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-/** Genera un ID único para una reserva. */
 function genResId() {
   return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
 }
 
-/**
- * Siguiente IPv4 libre en el rango reservado (.2 – .10) de la VLAN.
- * Retorna string de IP o '' si el rango está lleno.
- */
 function getNextReservedIP4(vlanId) {
   const vlan = S.vlans.find(v => v.id === vlanId);
   if (!vlan || !vlan.gateway_v4) return '';
@@ -886,10 +752,6 @@ function getNextReservedIP4(vlanId) {
   return '';
 }
 
-/**
- * Siguiente IPv6 libre en el rango reservado (::2 – ::10) de la VLAN.
- * Retorna string de IPv6 o '' si IPv6 está desactivado o el rango está lleno.
- */
 function getNextReservedIP6(vlanId) {
   const vlan = S.vlans.find(v => v.id === vlanId);
   if (!vlan || !vlan.gateway_v6) return '';
@@ -902,40 +764,28 @@ function getNextReservedIP6(vlanId) {
   return '';
 }
 
-/**
- * Valida que una IPv4 sea válida y esté dentro del rango .2–.10 de la VLAN.
- * @param {string} ip4
- * @param {number} vlanId
- * @param {string|null} excludeResId  — ID de reserva a excluir de la comprobación de duplicados
- */
 function isValidReservedIP4(ip4, vlanId, excludeResId = null) {
   const vlan = S.vlans.find(v => v.id === vlanId);
   if (!vlan || !isValidIPv4(ip4)) return false;
   const ipInt = ipToInt(ip4);
   const gwInt = ipToInt(vlan.gateway_v4);
-  if (ipInt < gwInt + 1 || ipInt > gwInt + 9) return false;   // rango .2–.10
+  if (ipInt < gwInt + 1 || ipInt > gwInt + 9) return false;
   const used = (vlan.reserved_ips || [])
     .filter(r => r.id !== excludeResId)
     .map(r => r.ip4).filter(Boolean).map(ipToInt);
   return !used.includes(ipInt);
 }
 
-/**
- * Valida que una IPv6 sea válida, no sea la gateway (::1) y no esté duplicada.
- */
 function isValidReservedIP6(ip6, vlanId, excludeResId = null) {
   const vlan = S.vlans.find(v => v.id === vlanId);
   if (!vlan || !isValidIPv6(ip6)) return false;
-  if (ip6.trim() === vlan.gateway_v6) return false;           // no puede ser ::1
+  if (ip6.trim() === vlan.gateway_v6) return false;
   const used = (vlan.reserved_ips || [])
     .filter(r => r.id !== excludeResId)
     .map(r => r.ip6).filter(Boolean);
   return !used.includes(ip6.trim());
 }
 
-/**
- * Genera el HTML de la sección de IPs de reserva para una tarjeta VLAN.
- */
 function renderReserveSection(v) {
   const expanded  = S.reserve_expanded[v.id] || false;
   const rips      = v.reserved_ips || [];
@@ -947,7 +797,6 @@ function renderReserveSection(v) {
   const suggestIP4 = getNextReservedIP4(v.id);
   const suggestIP6 = ipv6On ? getNextReservedIP6(v.id) : '';
 
-  /* ── Tabla de reservas existentes ── */
   let tableHtml = '';
   if (rips.length > 0) {
     const rows = rips.map(r => `
@@ -974,7 +823,6 @@ function renderReserveSection(v) {
     tableHtml = `<p class="reserve-empty">Sin IPs de reserva asignadas (rango ${rangeStart}–${rangeEnd})</p>`;
   }
 
-  /* ── Formulario de agregar reserva ── */
   const stackOpts = ipv6On
     ? `<option value="ipv4">Solo IPv4</option>
        <option value="ipv6">Solo IPv6</option>
@@ -1043,7 +891,6 @@ function renderReserveSection(v) {
     </div>`;
 }
 
-/** Alterna la visibilidad de la sección de reservas de una VLAN. */
 function toggleReserveSection(vlanId) {
   S.reserve_expanded[vlanId] = !S.reserve_expanded[vlanId];
   const body  = document.getElementById(`reserve-body-${vlanId}`);
@@ -1052,13 +899,11 @@ function toggleReserveSection(vlanId) {
   if (arrow) arrow.classList.toggle('open', S.reserve_expanded[vlanId]);
 }
 
-/** Muestra el formulario de agregar reserva para una VLAN. */
 function showReserveForm(vlanId) {
   const form   = document.getElementById(`reserve-form-${vlanId}`);
   const addBtn = document.getElementById(`btn-add-reserve-${vlanId}`);
   if (!form) return;
 
-  /* Limpiar campos */
   const aliasEl = document.getElementById(`inp-res-alias-${vlanId}`);
   const ip4El   = document.getElementById(`inp-res-ip4-${vlanId}`);
   const ip6El   = document.getElementById(`inp-res-ip6-${vlanId}`);
@@ -1068,11 +913,10 @@ function showReserveForm(vlanId) {
   if (ip6El)   ip6El.value   = getNextReservedIP6(vlanId);
   if (stackEl) stackEl.value = 'ipv4';
 
-  /* Limpiar validaciones previas */
   [`field-res-alias-${vlanId}`, `field-res-ip4-${vlanId}`, `field-res-ip6-${vlanId}`]
     .forEach(id => document.getElementById(id)?.classList.remove('invalid'));
 
-  onReserveStackChange(vlanId);   /* ajusta visibilidad IPv4/IPv6 según stack */
+  onReserveStackChange(vlanId);
 
   const saveBtn = document.getElementById(`btn-save-res-${vlanId}`);
   if (saveBtn) saveBtn.disabled = true;
@@ -1081,18 +925,11 @@ function showReserveForm(vlanId) {
   if (addBtn) addBtn.classList.add('hidden');
 }
 
-/** Cierra el formulario de agregar reserva sin guardar. */
 function cancelReserveForm(vlanId) {
   document.getElementById(`reserve-form-${vlanId}`)?.classList.add('hidden');
   document.getElementById(`btn-add-reserve-${vlanId}`)?.classList.remove('hidden');
 }
 
-/**
- * Actualiza visibilidad de campos IPv4/IPv6 según el tipo de stack seleccionado.
- * · ipv4 → solo muestra IPv4
- * · ipv6 → solo muestra IPv6
- * · dual → muestra ambos
- */
 function onReserveStackChange(vlanId) {
   const stack   = document.getElementById(`sel-res-stack-${vlanId}`)?.value || 'ipv4';
   const ip4Fld  = document.getElementById(`field-res-ip4-${vlanId}`);
@@ -1101,17 +938,12 @@ function onReserveStackChange(vlanId) {
   if (ip4Fld) ip4Fld.classList.toggle('hidden', stack === 'ipv6');
   if (ip6Fld) ip6Fld.classList.toggle('hidden', stack === 'ipv4');
 
-  /* Limpiar estado de error al cambiar stack */
   if (stack === 'ipv6') document.getElementById(`field-res-ip4-${vlanId}`)?.classList.remove('invalid');
   if (stack === 'ipv4') document.getElementById(`field-res-ip6-${vlanId}`)?.classList.remove('invalid');
 
   validateReserveForm(vlanId);
 }
 
-/**
- * Valida el formulario de reserva en tiempo real.
- * Habilita / deshabilita "Guardar reserva".
- */
 function validateReserveForm(vlanId) {
   const aliasEl = document.getElementById(`inp-res-alias-${vlanId}`);
   const ip4El   = document.getElementById(`inp-res-ip4-${vlanId}`);
@@ -1129,7 +961,6 @@ function validateReserveForm(vlanId) {
   const ip4Ok     = !needsIP4 || isValidReservedIP4(ip4, vlanId);
   const ip6Ok     = !needsIP6 || isValidReservedIP6(ip6, vlanId);
 
-  /* Marcar error solo si el campo fue tocado */
   const aliasTouched = (aliasEl?.value || '') !== '';
   const ip4Touched   = (ip4El?.value   || '') !== '';
   const ip6Touched   = (ip6El?.value   || '') !== '';
@@ -1141,9 +972,6 @@ function validateReserveForm(vlanId) {
   if (saveBtn) saveBtn.disabled = !(aliasOk && ip4Ok && ip6Ok);
 }
 
-/**
- * Guarda una nueva reserva en S.vlan_defs y recalcula las tarjetas.
- */
 function saveReservation(vlanId) {
   const alias = document.getElementById(`inp-res-alias-${vlanId}`)?.value.trim();
   const ip4   = document.getElementById(`inp-res-ip4-${vlanId}`)?.value.trim();
@@ -1168,7 +996,7 @@ function saveReservation(vlanId) {
     stack,
   });
 
-  S.reserve_expanded[vlanId] = true;   // mantener sección abierta
+  S.reserve_expanded[vlanId] = true;
   buildVLANPlan();
   renderVLANCards();
   updateVlansCount();
@@ -1176,9 +1004,6 @@ function saveReservation(vlanId) {
   autosave();
 }
 
-/**
- * Elimina una reserva específica de una VLAN.
- */
 function deleteReservation(vlanId, resId) {
   const vlanDef = S.vlan_defs.find(v => v.id === vlanId);
   if (!vlanDef) return;
@@ -1193,8 +1018,10 @@ function deleteReservation(vlanId, resId) {
 }
 
 
+/* ══════════════════════════════════════════════════════════════
+   11. PASO 5 — RESUMEN Y TABLA VLSM
+   ══════════════════════════════════════════════════════════════ */
 
-/** Rellena la tabla VLSM y las métricas globales. */
 function renderSummary() {
   if (!S.vlans.length) return;
 
@@ -1224,85 +1051,93 @@ function renderSummary() {
       <td>${v.efficiency}%</td>
       <td>${S.ipv6 && v.subnet_v6 ? v.subnet_v6 : '—'}</td>
       <td>${S.ipv6 && v.gateway_v6 ? v.gateway_v6 : '—'}</td>
-    </tr>
-  `).join('');
+    </tr>`).join('');
 
-  /* Renderizar topología SVG inline en el paso 5 */
+  /* Render topología en preview */
   const topo = document.getElementById('topo-preview');
   if (topo) topo.innerHTML = generateTopologySVG();
 }
 
+/* Helpers compartidos para configs */
 
-/* ══════════════════════════════════════════════════════════════
-   HELPERS COMPARTIDOS — GENERADORES DE CONFIGURACIÓN
-   ══════════════════════════════════════════════════════════════ */
-
-/**
- * Genera el bloque de comentario para VLANs WiFi en cualquier vendor.
- * @param {object} v  — objeto VLAN
- * @param {string} cm — prefijo de comentario ('!' o '#')
- */
-function buildWifiComment(v, cm) {
-  if (v.type !== 'wifi') return '';
-  return `${cm} ─── NOTA WiFi — VLAN ${v.id} (${v.name}) ────────────────────────────
-` +
-         `${cm} La configuración del AP/Controlador inalámbrico (SSID, WPA3,
-` +
-         `${cm} bandas 2.4/5 GHz, portal cautivo) se realiza desde la GUI del vendor.
-` +
-         `${cm} Vendors: Cisco Meraki/Catalyst · Huawei AirEngine · Aruba · Ubiquiti
-` +
-         `${cm} IP Gateway/AP VLAN ${v.id}: ${v.gateway_v4}  |  IPv6: ${v.gateway_v6||'—'}
-${cm}
-`;
-}
-
-/**
- * Genera rutas estáticas WAN adicionales si el usuario las definió.
- * @param {string} vendor — 'cisco' | 'huawei'
- */
-function buildWanRoutes(vendor) {
-  if (!S.wan_nexthop || !S.wan_routes.length) return '';
-  const cm = vendor === 'cisco' ? '!' : '#';
-  let c = `${cm} ─── Rutas estáticas — Redes remotas / WAN ─────────────────
-`;
-  S.wan_routes.forEach(r => {
-    const p = parseCIDR(r);
-    if (!p) return;
-    c += vendor === 'cisco'
-      ? `ip route ${p.address} ${prefixToMask(p.prefix)} ${S.wan_nexthop}
-`
-      : `ip route-static ${p.address} ${prefixToMask(p.prefix)} ${S.wan_nexthop}
-`;
-  });
-  return c + `${cm}
-`;
-}
-
-/* ══════════════════════════════════════════════════════════════
-   12. GENERADOR CISCO IOS/XE
-   Cubre: Core Switch L3 (Catalyst) + rutas estáticas IPv4/IPv6
-          + pools DHCP IPv4 + pools DHCPv6 Stateless
-   ══════════════════════════════════════════════════════════════ */
-
-/** IP del firewall: segunda IP usable de VLAN 60 (Gestión). */
 function getFWip() {
   const v60 = S.vlans.find(v => v.id === 60);
-  return v60 ? intToIp(ipToInt(v60.gateway_v4) + 1) : '(IP_FIREWALL)';
+  return v60 ? intToIp(ipToInt(v60.gateway_v4) + 1) : '(FW_IP)';
 }
 
-/** IPv6 del firewall: segunda IP en VLAN 60. */
 function getFWv6ip() {
   const v60 = S.vlans.find(v => v.id === 60);
-  return v60?.gateway_v6 ? v60.gateway_v6.replace('::1', '::2') : '(FW_IPV6)';
+  return v60 && v60.gateway_v6 ? v60.gateway_v6.replace('::1', '::2') : '(FW_IPV6)';
 }
 
+function getCoreIP() {
+  const v60 = S.vlans.find(v => v.id === 60);
+  return v60 ? v60.gateway_v4 : '(IP_CORE)';
+}
+
+function buildWifiComment(v, prefix) {
+  if (v.type !== 'wifi') return '';
+  return `${prefix} ─── ${v.name} (WiFi) ──────────────────────────────────\n`;
+}
+
+function buildWanRoutes(vendor) {
+  if (!S.wan_nexthop || !S.wan_routes.length) return '';
+  let c = '';
+  S.wan_routes.forEach(route => {
+    const p = parseCIDR(route);
+    if (!p) return;
+    if (vendor === 'cisco') {
+      c += `ip route ${p.address} ${prefixToMask(p.prefix)} ${S.wan_nexthop}\n`;
+    } else if (vendor === 'huawei') {
+      c += `ip route-static ${p.address} ${prefixToMask(p.prefix)} ${S.wan_nexthop}\n`;
+    }
+  });
+  if (c) c += vendor === 'cisco' ? '!\n' : '#\n';
+  return c;
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   12. GENERADOR CISCO IOS/XE — POR DISPOSITIVO
+   Devuelve array de bloques: { hostname, role, content }
+   ══════════════════════════════════════════════════════════════ */
+
 function generateCiscoConfig() {
-  const fw  = getFWip();
+  const blocks = [];
+
+  /* Bloque 1: Core Switch L3 */
+  blocks.push({
+    hostname: 'CORE-SW-01',
+    role:     'Core Switch L3',
+    content:  generateCiscoCore(),
+  });
+
+  /* Bloques 2..N: Switches L2 de acceso (uno por piso que NO sea el Core) */
+  for (let floor = 1; floor <= S.pisos; floor++) {
+    if (floor === S.core_piso) continue;  // Core absorbe ese piso (opción B)
+    blocks.push({
+      hostname: `SW-ACC-P${floor}`,
+      role:     'Access Switch L2',
+      content:  generateCiscoAccessSwitch(floor),
+    });
+  }
+
+  /* Bloque N+1: Firewall referencial */
+  blocks.push({
+    hostname: 'FW-01',
+    role:     'Firewall (Cisco ASA — referencia)',
+    content:  generateCiscoFirewallRef(),
+  });
+
+  return blocks;
+}
+
+function generateCiscoCore() {
+  const fw   = getFWip();
   const fwV6 = S.ipv6 ? getFWv6ip() : null;
 
   let c = `! ════════════════════════════════════════════════════════════
-! NetPlan Pro v4.0 — Cisco IOS/XE — CORE-SW-01
+! NetPlan Pro v4.6 — Cisco IOS/XE — CORE-SW-01
 ! Tipo: Core Switch L3 (Catalyst)
 ! Redundancia: ${S.redundancia === 'dual' ? 'Dual-Link LACP' : 'Single-Link'}
 ! Generado automáticamente — verificar antes de aplicar en producción
@@ -1347,7 +1182,7 @@ ${S.ipv6 ? 'ipv6 unicast-routing\nipv6 nd drop-unsolicited-na\n!' : '! IPv6 desh
     c += ` lease 1\n!\n`;
   });
 
-  /* ── IPs de reserva: pools estáticos por VLAN ── */
+  /* IPs de reserva: pools estáticos por VLAN */
   const vlansWithReserves = S.vlans.filter(v => (v.reserved_ips || []).length > 0);
   if (vlansWithReserves.length > 0) {
     c += `! ─── Pools DHCP estáticos — IPs de reserva ─────────────────\n`;
@@ -1365,7 +1200,7 @@ ${S.ipv6 ? 'ipv6 unicast-routing\nipv6 nd drop-unsolicited-na\n!' : '! IPv6 desh
         }
         if (r.ip6 && S.ipv6) {
           c += `! IPv6 estática: ${r.ip6} → ${r.alias} (VLAN ${v.id})\n`;
-          c += `! Asignar manualmente en el dispositivo o via DHCPv6 stateful (requiere configuración adicional)\n!\n`;
+          c += `! Asignar manualmente en el dispositivo o via DHCPv6 stateful\n!\n`;
         }
       });
     });
@@ -1395,32 +1230,143 @@ ${S.ipv6 ? 'ipv6 unicast-routing\nipv6 nd drop-unsolicited-na\n!' : '! IPv6 desh
     c += `interface Port-channel1\n description Uplink-LACP-FW-01\n switchport mode trunk\n!\n`;
     c += `interface GigabitEthernet1/0/47\n channel-group 1 mode active\n no shutdown\n!\n`;
     c += `interface GigabitEthernet1/0/48\n channel-group 1 mode active\n no shutdown\n!\n`;
+  } else {
+    c += `! ─── Uplink Single-Link hacia Firewall ──────────────────────\n`;
+    c += `interface GigabitEthernet1/0/48\n description Uplink-FW-01\n switchport mode trunk\n no shutdown\n!\n`;
   }
 
-  c += `! ─── Puertos de acceso por piso ─────────────────────────────\n`;
-  for (let floor = 1; floor <= S.pisos; floor++) {
-    c += `! Piso ${floor}${floor === S.core_piso ? ' — Core/CPD' : ''}\n`;
-    c += `interface range GigabitEthernet0/1 - ${S.puertos - 2}\n`;
-    c += ` description Acceso-Piso${floor}\n`;
-    c += ` switchport mode access\n`;
-    c += ` switchport access vlan 10\n`;
-    c += ` switchport voice vlan 40\n`;
-    c += ` spanning-tree portfast\n no shutdown\n!\n`;
+  /* Trunks hacia los SW-ACC */
+  const accFloors = [];
+  for (let f = 1; f <= S.pisos; f++) {
+    if (f !== S.core_piso) accFloors.push(f);
+  }
+  if (accFloors.length > 0) {
+    c += `! ─── Trunks hacia switches de acceso ────────────────────────\n`;
+    if (S.redundancia === 'dual') {
+      accFloors.forEach((f, idx) => {
+        const poN = idx + 2;  // Po1 ya está reservado para uplink FW
+        c += `interface Port-channel${poN}\n description Trunk-LACP-SW-ACC-P${f}\n switchport mode trunk\n switchport trunk allowed vlan ${S.vlans.map(v=>v.id).join(',')}\n!\n`;
+        c += `interface GigabitEthernet1/0/${idx*2+1}\n description To-SW-ACC-P${f}-link1\n channel-group ${poN} mode active\n no shutdown\n!\n`;
+        c += `interface GigabitEthernet1/0/${idx*2+2}\n description To-SW-ACC-P${f}-link2\n channel-group ${poN} mode active\n no shutdown\n!\n`;
+      });
+    } else {
+      accFloors.forEach((f, idx) => {
+        c += `interface GigabitEthernet1/0/${idx+1}\n description To-SW-ACC-P${f}\n switchport mode trunk\n switchport trunk allowed vlan ${S.vlans.map(v=>v.id).join(',')}\n no shutdown\n!\n`;
+      });
+    }
   }
 
-  c += `! ─── Firewall Cisco ASA/Firepower — FW-01 ───────────────────\n`;
-  c += `! (Configuración de referencia — adaptar según el modelo)\n!\n`;
-  c += `! hostname FW-01\n`;
-  c += `! interface GigabitEthernet0/0\n`;
-  c += `!  nameif outside\n`;
-  c += `!  security-level 0\n`;
-  c += `!  ip address dhcp setroute\n`;
-  c += `!\n`;
-  c += `! interface GigabitEthernet0/1\n`;
-  c += `!  nameif inside\n`;
-  c += `!  security-level 100\n`;
-  c += `!  ip address ${getFWip()} ${S.vlans.find(v=>v.id===60)?.mask || '255.255.255.0'}\n`;
-  c += `!\n`;
+  if (S.hardening_l2) {
+    c += `! ─── Hardening L2 — protección global ──────────────────────\n`;
+    c += `spanning-tree mode rapid-pvst\n`;
+    c += `spanning-tree portfast bpduguard default\n`;
+    c += `! Root bridge: este Core es la raíz STP para todas las VLANs\n`;
+    c += `spanning-tree vlan ${S.vlans.map(v=>v.id).join(',')} root primary\n!\n`;
+  }
+
+  return c;
+}
+
+function generateCiscoAccessSwitch(floor) {
+  const vlanIds = S.vlans.map(v => v.id).join(',');
+
+  let c = `! ════════════════════════════════════════════════════════════
+! NetPlan Pro v4.6 — Cisco IOS/XE — SW-ACC-P${floor}
+! Tipo: Access Switch L2 (Catalyst)
+! Piso: ${floor}
+! Redundancia: ${S.redundancia === 'dual' ? 'Dual-Link LACP' : 'Single-Link'}
+! Generado automáticamente — verificar antes de aplicar
+! ════════════════════════════════════════════════════════════
+!
+hostname SW-ACC-P${floor}
+ip domain-name ${S.domain}
+ntp server ${S.ntp}
+!
+! ─── VLANs (solo declaración, sin SVIs) ─────────────────────\n`;
+
+  S.vlans.forEach(v => {
+    c += `vlan ${v.id}\n name ${v.name.replace(/\s/g, '_')}\n!\n`;
+  });
+
+  c += `! ─── VLAN de gestión (única SVI permitida en L2) ────────────\n`;
+  c += `interface Vlan60\n description Gestion-SW-ACC-P${floor}\n`;
+  const v60 = S.vlans.find(v => v.id === 60);
+  if (v60) {
+    /* Tomar una IP libre en la VLAN 60 — usamos .20+floor para no chocar con FW (.2) ni reservas (.2-.10) */
+    const mgmtIp = intToIp(ipToInt(v60.gateway_v4) + 20 + floor);
+    c += ` ip address ${mgmtIp} ${v60.mask}\n`;
+  } else {
+    c += ` ! Configurar IP de gestión en VLAN 60\n`;
+  }
+  c += ` no shutdown\n!\n`;
+  c += `ip default-gateway ${getCoreIP()}\n!\n`;
+
+  /* Uplink hacia el Core */
+  if (S.redundancia === 'dual') {
+    c += `! ─── Uplink Dual-Link LACP hacia Core ───────────────────────\n`;
+    c += `interface Port-channel1\n description Uplink-LACP-CORE\n switchport mode trunk\n switchport trunk allowed vlan ${vlanIds}\n!\n`;
+    c += `interface GigabitEthernet0/${S.puertos - 1}\n description Uplink-CORE-link1\n channel-group 1 mode active\n no shutdown\n!\n`;
+    c += `interface GigabitEthernet0/${S.puertos}\n description Uplink-CORE-link2\n channel-group 1 mode active\n no shutdown\n!\n`;
+  } else {
+    c += `! ─── Uplink Single-Link hacia Core ──────────────────────────\n`;
+    c += `interface GigabitEthernet0/${S.puertos}\n description Uplink-CORE\n switchport mode trunk\n switchport trunk allowed vlan ${vlanIds}\n no shutdown\n!\n`;
+  }
+
+  /* Puertos de acceso */
+  const lastAccessPort = S.redundancia === 'dual' ? S.puertos - 2 : S.puertos - 1;
+  c += `! ─── Puertos de acceso (1 — ${lastAccessPort}) ─────────────────────────\n`;
+  c += `interface range GigabitEthernet0/1 - ${lastAccessPort}\n`;
+  c += ` description Acceso-Piso${floor}\n`;
+  c += ` switchport mode access\n`;
+  c += ` switchport access vlan 10\n`;
+  c += ` switchport voice vlan 40\n`;
+  c += ` spanning-tree portfast\n`;
+  if (S.hardening_l2) {
+    c += ` spanning-tree bpduguard enable\n`;
+    c += ` switchport port-security\n`;
+    c += ` switchport port-security maximum 2\n`;
+    c += ` switchport port-security violation restrict\n`;
+    c += ` switchport port-security aging time 60\n`;
+    c += ` switchport port-security aging type inactivity\n`;
+  }
+  c += ` no shutdown\n!\n`;
+
+  if (S.hardening_l2) {
+    c += `! ─── Hardening L2 ───────────────────────────────────────────\n`;
+    c += `spanning-tree mode rapid-pvst\n`;
+    c += `spanning-tree portfast bpduguard default\n!\n`;
+    c += `! Recomendaciones adicionales (no automatizadas):\n`;
+    c += `!   - DHCP snooping habilitado en VLANs de usuarios\n`;
+    c += `!     ip dhcp snooping\n`;
+    c += `!     ip dhcp snooping vlan 10,40\n`;
+    c += `!   - Dynamic ARP Inspection en las mismas VLANs\n`;
+    c += `!     ip arp inspection vlan 10,40\n!\n`;
+  }
+
+  return c;
+}
+
+function generateCiscoFirewallRef() {
+  const v60 = S.vlans.find(v => v.id === 60);
+  let c = `! ════════════════════════════════════════════════════════════
+! NetPlan Pro v4.6 — Cisco ASA/Firepower — FW-01 (REFERENCIA)
+! Esta configuración es de referencia comentada para ASA/Firepower.
+! Si tu firewall es FortiGate, usa el bloque generado en la
+! pestaña "FortiGate (FW)" en lugar de este.
+! ════════════════════════════════════════════════════════════
+!
+! hostname FW-01
+! interface GigabitEthernet0/0
+!  nameif outside
+!  security-level 0
+!  ip address dhcp setroute
+!
+! interface GigabitEthernet0/1
+!  nameif inside
+!  security-level 100
+!  ip address ${getFWip()} ${v60?.mask || '255.255.255.0'}
+!
+`;
   S.vlans.forEach(v => {
     c += `! access-list INSIDE_OUT extended permit ip ${v.network} ${v.mask} any\n`;
   });
@@ -1431,18 +1377,43 @@ ${S.ipv6 ? 'ipv6 unicast-routing\nipv6 nd drop-unsolicited-na\n!' : '! IPv6 desh
 
 
 /* ══════════════════════════════════════════════════════════════
-   13. GENERADOR HUAWEI VRP
-   Cubre: Core Switch (S-series) + rutas estáticas IPv4/IPv6
-          + pools DHCP IPv4 + pools DHCPv6 Stateless
+   13. GENERADOR HUAWEI VRP — POR DISPOSITIVO
    ══════════════════════════════════════════════════════════════ */
 
 function generateHuaweiConfig() {
-  const fw  = getFWip();
+  const blocks = [];
+
+  blocks.push({
+    hostname: 'CORE-SW-01',
+    role:     'Core Switch L3',
+    content:  generateHuaweiCore(),
+  });
+
+  for (let floor = 1; floor <= S.pisos; floor++) {
+    if (floor === S.core_piso) continue;
+    blocks.push({
+      hostname: `SW-ACC-P${floor}`,
+      role:     'Access Switch L2',
+      content:  generateHuaweiAccessSwitch(floor),
+    });
+  }
+
+  blocks.push({
+    hostname: 'FW-01',
+    role:     'Firewall (Huawei USG — referencia)',
+    content:  generateHuaweiFirewallRef(),
+  });
+
+  return blocks;
+}
+
+function generateHuaweiCore() {
+  const fw   = getFWip();
   const fwV6 = S.ipv6 ? getFWv6ip() : null;
   const vlanIds = S.vlans.map(v => v.id).join(' ');
 
   let c = `# ════════════════════════════════════════════════════════════
-# NetPlan Pro v4.0 — Huawei VRP — CORE-SW-01
+# NetPlan Pro v4.6 — Huawei VRP — CORE-SW-01
 # Tipo: Core Switch L3 (S-series)
 # Redundancia: ${S.redundancia === 'dual' ? 'Dual-Link LACP' : 'Single-Link'}
 # Generado automáticamente — verificar antes de aplicar en producción
@@ -1491,7 +1462,6 @@ vlan batch ${vlanIds}
     c += ` domain-name ${S.domain}\n#\n`;
   });
 
-  /* ── IPs de reserva: static-bind por VLAN ── */
   const vlansWithResH = S.vlans.filter(v => (v.reserved_ips || []).length > 0);
   if (vlansWithResH.length > 0) {
     c += `# ─── DHCP estático — IPs de reserva ────────────────────────\n`;
@@ -1536,23 +1506,138 @@ vlan batch ${vlanIds}
 
   if (S.redundancia === 'dual') {
     c += `# ─── Dual-Link LACP hacia Firewall ──────────────────────────\n`;
-    c += `interface Eth-Trunk1\n description Uplink-LACP-FW-01\n mode lacp-static\n#\n`;
+    c += `interface Eth-Trunk1\n description Uplink-LACP-FW-01\n mode lacp-static\n port link-type trunk\n port trunk allow-pass vlan ${vlanIds}\n#\n`;
     c += `interface GigabitEthernet0/0/47\n eth-trunk 1\n#\n`;
     c += `interface GigabitEthernet0/0/48\n eth-trunk 1\n#\n`;
+  } else {
+    c += `# ─── Uplink Single-Link hacia Firewall ──────────────────────\n`;
+    c += `interface GigabitEthernet0/0/48\n description Uplink-FW-01\n port link-type trunk\n port trunk allow-pass vlan ${vlanIds}\n undo shutdown\n#\n`;
   }
 
-  c += `# ─── Firewall Huawei USG — FW-01 ────────────────────────────\n`;
-  c += `# (Configuración de referencia — adaptar según el modelo)\n#\n`;
-  c += `# sysname FW-01\n`;
-  c += `# #\n`;
-  c += `# interface GigabitEthernet0/0/1\n`;
-  c += `#  alias "WAN"\n`;
-  c += `#  ip address dhcp-alloc\n`;
-  c += `# #\n`;
-  c += `# interface GigabitEthernet0/0/0\n`;
-  c += `#  alias "LAN-Core"\n`;
-  c += `#  ip address ${getFWip()} ${S.vlans.find(v=>v.id===60)?.mask || '255.255.255.0'}\n`;
-  c += `# #\n`;
+  /* Trunks hacia los SW-ACC */
+  const accFloors = [];
+  for (let f = 1; f <= S.pisos; f++) {
+    if (f !== S.core_piso) accFloors.push(f);
+  }
+  if (accFloors.length > 0) {
+    c += `# ─── Trunks hacia switches de acceso ────────────────────────\n`;
+    if (S.redundancia === 'dual') {
+      accFloors.forEach((f, idx) => {
+        const trN = idx + 2;
+        c += `interface Eth-Trunk${trN}\n description Trunk-LACP-SW-ACC-P${f}\n mode lacp-static\n port link-type trunk\n port trunk allow-pass vlan ${vlanIds}\n#\n`;
+        c += `interface GigabitEthernet0/0/${idx*2+1}\n description To-SW-ACC-P${f}-link1\n eth-trunk ${trN}\n#\n`;
+        c += `interface GigabitEthernet0/0/${idx*2+2}\n description To-SW-ACC-P${f}-link2\n eth-trunk ${trN}\n#\n`;
+      });
+    } else {
+      accFloors.forEach((f, idx) => {
+        c += `interface GigabitEthernet0/0/${idx+1}\n description To-SW-ACC-P${f}\n port link-type trunk\n port trunk allow-pass vlan ${vlanIds}\n undo shutdown\n#\n`;
+      });
+    }
+  }
+
+  if (S.hardening_l2) {
+    c += `# ─── Hardening L2 — protección global ──────────────────────\n`;
+    c += `stp mode rstp\n`;
+    c += `stp bpdu-protection\n`;
+    c += `# Este Core es la raíz STP\n`;
+    c += `stp instance 0 priority 0\n#\n`;
+  }
+
+  return c;
+}
+
+function generateHuaweiAccessSwitch(floor) {
+  const vlanIds = S.vlans.map(v => v.id).join(' ');
+  const vlanIdsCsv = S.vlans.map(v => v.id).join(',');
+
+  let c = `# ════════════════════════════════════════════════════════════
+# NetPlan Pro v4.6 — Huawei VRP — SW-ACC-P${floor}
+# Tipo: Access Switch L2 (S-series)
+# Piso: ${floor}
+# Redundancia: ${S.redundancia === 'dual' ? 'Dual-Link LACP' : 'Single-Link'}
+# ════════════════════════════════════════════════════════════
+#
+sysname SW-ACC-P${floor}
+#
+ntp-service unicast-server ${S.ntp}
+#
+# ─── VLANs (solo declaración) ───────────────────────────────
+vlan batch ${vlanIds}
+#`;
+
+  S.vlans.forEach(v => {
+    c += `\nvlan ${v.id}\n description ${v.name}\n#`;
+  });
+
+  c += `\n# ─── VLAN de gestión ────────────────────────────────────────\n`;
+  const v60 = S.vlans.find(v => v.id === 60);
+  if (v60) {
+    const mgmtIp = intToIp(ipToInt(v60.gateway_v4) + 20 + floor);
+    c += `interface Vlanif60\n description Gestion-SW-ACC-P${floor}\n ip address ${mgmtIp} ${v60.mask}\n undo shutdown\n#\n`;
+  }
+  c += `ip route-static 0.0.0.0 0.0.0.0 ${getCoreIP()}\n#\n`;
+
+  if (S.redundancia === 'dual') {
+    c += `# ─── Uplink Dual-Link LACP hacia Core ───────────────────────\n`;
+    c += `interface Eth-Trunk1\n description Uplink-LACP-CORE\n mode lacp-static\n port link-type trunk\n port trunk allow-pass vlan ${vlanIds}\n#\n`;
+    c += `interface GigabitEthernet0/0/${S.puertos - 1}\n description Uplink-CORE-link1\n eth-trunk 1\n#\n`;
+    c += `interface GigabitEthernet0/0/${S.puertos}\n description Uplink-CORE-link2\n eth-trunk 1\n#\n`;
+  } else {
+    c += `# ─── Uplink Single-Link hacia Core ──────────────────────────\n`;
+    c += `interface GigabitEthernet0/0/${S.puertos}\n description Uplink-CORE\n port link-type trunk\n port trunk allow-pass vlan ${vlanIds}\n undo shutdown\n#\n`;
+  }
+
+  const lastAccessPort = S.redundancia === 'dual' ? S.puertos - 2 : S.puertos - 1;
+  c += `# ─── Puertos de acceso (1 — ${lastAccessPort}) ─────────────────────────\n`;
+  c += `port-group access-piso${floor}\n group-member GigabitEthernet0/0/1 to GigabitEthernet0/0/${lastAccessPort}\n`;
+  c += ` port link-type access\n`;
+  c += ` port default vlan 10\n`;
+  c += ` voice-vlan 40 enable\n`;
+  c += ` stp edged-port enable\n`;
+  if (S.hardening_l2) {
+    c += ` stp bpdu-protection\n`;
+    c += ` port-security enable\n`;
+    c += ` port-security max-mac-num 2\n`;
+    c += ` port-security protect-action restrict\n`;
+    c += ` port-security aging-time 60\n`;
+  }
+  c += ` undo shutdown\n#\n`;
+
+  if (S.hardening_l2) {
+    c += `# ─── Hardening L2 ───────────────────────────────────────────\n`;
+    c += `stp mode rstp\n`;
+    c += `stp bpdu-protection\n#\n`;
+    c += `# Recomendaciones adicionales (no automatizadas):\n`;
+    c += `#   - DHCP snooping en VLANs de usuarios:\n`;
+    c += `#     dhcp snooping enable\n`;
+    c += `#     vlan ${vlanIdsCsv}\n`;
+    c += `#       dhcp snooping enable\n`;
+    c += `#   - ARP anti-spoofing en las mismas VLANs\n#\n`;
+  }
+
+  return c;
+}
+
+function generateHuaweiFirewallRef() {
+  const v60 = S.vlans.find(v => v.id === 60);
+  let c = `# ════════════════════════════════════════════════════════════
+# NetPlan Pro v4.6 — Huawei USG — FW-01 (REFERENCIA)
+# Esta configuración es de referencia comentada para USG.
+# Si tu firewall es FortiGate, usa el bloque generado en la
+# pestaña "FortiGate (FW)" en lugar de este.
+# ════════════════════════════════════════════════════════════
+#
+# sysname FW-01
+# #
+# interface GigabitEthernet0/0/1
+#  alias "WAN"
+#  ip address dhcp-alloc
+# #
+# interface GigabitEthernet0/0/0
+#  alias "LAN-Core"
+#  ip address ${getFWip()} ${v60?.mask || '255.255.255.0'}
+# #
+`;
   S.vlans.forEach(v => {
     c += `# ip route-static ${v.network} ${v.mask} ${v.gateway_v4}\n`;
   });
@@ -1562,193 +1647,64 @@ vlan batch ${vlanIds}
 }
 
 
-
 /* ══════════════════════════════════════════════════════════════
    13b. GENERADOR FORTINET FortiOS (FortiGate — Firewall perimetral)
-   Propósito: configurar el FortiGate como firewall perimetral de borde.
-   NO genera config de switch — ese rol lo hace el Core Switch (Cisco/Huawei).
-   Cubre:
-     · Interfaces internas por VLAN (subinterfaces sobre port interno)
-     · Políticas de firewall: LAN → WAN (permiso de salida a Internet)
-     · NAT de origen (masquerading) para cada subred
-     · Servidor DHCP por VLAN (respaldo o principal según topología)
-     · Rutas estáticas hacia el Core Switch para cada subred interna
-     · Configuración DNS y NTP del equipo
+   Devuelve un array con UN solo bloque (es un único equipo).
    ══════════════════════════════════════════════════════════════ */
+
 function generateFortinetConfig() {
+  return [{
+    hostname: 'FG-CORP-01',
+    role:     'Firewall perimetral (FortiGate)',
+    content:  generateFortinetFW(),
+  }];
+}
+
+function generateFortinetFW() {
   const coreIP = getCoreIP();
 
   let c = `# ════════════════════════════════════════════════════════════
-# NetPlan Pro v4.0 — Fortinet FortiOS — FG-CORP-01
+# NetPlan Pro v4.6 — Fortinet FortiOS — FG-CORP-01
 # Rol: Firewall perimetral (FortiGate)
 # NOTA: Esta configuración es para el FIREWALL, no para el switch.
-#       El routing entre VLANs lo hace el Core Switch (Cisco/Huawei).
-# Generado automáticamente — verificar antes de aplicar en producción
+# Núcleo L3 / L2 generado por separado (Cisco o Huawei).
 # ════════════════════════════════════════════════════════════
 #
 config system global
-    set hostname FG-CORP-01
+    set hostname "FG-CORP-01"
     set timezone 12
-    set admintimeout 30
 end
 #
 config system dns
     set primary ${S.dns4}
-    set secondary 8.8.4.4
 end
 #
 config system ntp
-    set type custom
+    set ntpsync enable
     config ntpserver
         edit 1
             set server "${S.ntp}"
         next
     end
-    set ntpsync enable
 end
 #
-# ─── Interfaces internas: subinterfaces por VLAN ─────────────
-# Cada VLAN aparece como subinterfaz de la interfaz que conecta al Core.
-# La IP es la segunda usable de la VLAN (la primera es el gateway del Core).
-#
-`;
-
-  S.vlans.forEach((v, i) => {
-    const fwIp = intToIp(ipToInt(v.gateway_v4) + 1);
-    c += `config system interface
-`;
-    c += `    edit "lan-vlan${v.id}"
-`;
-    c += `        set vdom "root"
-`;
-    c += `        set mode static
-`;
-    c += `        set ip ${fwIp} ${v.mask}
-`;
-    c += `        set allowaccess ping
-`;
-    c += `        set interface "internal1"
-`;
-    c += `        set vlanid ${v.id}
-`;
-    c += `        set alias "${v.name} — ${v.floor_label}"
-`;
-    if (S.ipv6 && v.gateway_v6) {
-      const fwV6 = v.gateway_v6.replace('::1', '::2');
-      c += `        config ipv6
-`;
-      c += `            set ip6-address ${fwV6}/64
-`;
-      c += `            set ip6-allowaccess ping
-`;
-      c += `        end
-`;
-    }
-    c += `    next
-end
-#
-`;
-  });
-
-  c += `# ─── Rutas estáticas: FW → Core Switch por cada subred ──────
-# El tráfico interno entre VLANs va al Core Switch, NO pasa por el FW.
-#
-`;
-  S.vlans.forEach((v, i) => {
-    c += `config router static
-    edit ${i + 1}
-`;
-    c += `        set dst ${v.network} ${v.mask}
-`;
-    c += `        set gateway ${v.gateway_v4}
-`;
-    c += `        set device "internal1"
-    next
-end
-#
-`;
-  });
-
-  c += `# ─── Políticas de firewall: LAN → WAN (salida a Internet) ───
-# Una política por VLAN permite el tráfico de salida con NAT.
-#
-`;
-  S.vlans.forEach((v, i) => {
-    c += `config firewall policy
-    edit ${i + 1}
-`;
-    c += `        set name "${v.name}-to-WAN"
-`;
-    c += `        set srcintf "lan-vlan${v.id}"
-`;
-    c += `        set dstintf "wan1"
-`;
-    c += `        set srcaddr "all"
-`;
-    c += `        set dstaddr "all"
-`;
-    c += `        set action accept
-`;
-    c += `        set schedule "always"
-`;
-    c += `        set service "ALL"
-`;
-    c += `        set nat enable
-    next
-end
-#
-`;
-  });
-
-  c += `# ─── DHCP Relay: reenviar solicitudes al Core Switch ─────────
-# El Core Switch es el servidor DHCP real.
-# El FW actúa como relay para cada VLAN.
-#
+# ─── Interfaces VLAN sobre el puerto interno ────────────────
 `;
   S.vlans.forEach(v => {
     const fwIp = intToIp(ipToInt(v.gateway_v4) + 1);
-    c += `config system dhcp server
+    c += `config system interface
+    edit "lan-vlan${v.id}"
+        set vdom "root"
+        set ip ${fwIp} ${v.mask}
+        set allowaccess ping https ssh
+        set vlanid ${v.id}
+        set interface "internal"
+        set description "${v.name} — VLAN ${v.id}"
 `;
-    c += `    edit 0
-`;
-    c += `        set dns-server1 ${S.dns4}
-`;
-    c += `        set default-gateway ${fwIp}
-`;
-    c += `        set netmask ${v.mask}
-`;
-    c += `        set interface "lan-vlan${v.id}"
-`;
-    c += `        set dns-service default
-`;
-    c += `        set domain ${S.domain}
-`;
-    c += `        config ip-range
-            edit 1
-`;
-    const poolStart = intToIp(ipToInt(v.gateway_v4) + 10);
-    const poolEnd   = intToIp(ipToInt(v.broadcast) - 1);
-    c += `                set start-ip ${poolStart}
-                set end-ip ${poolEnd}
-`;
-    c += `            next
-        end
-`;
-    /* Reservas como IP reservadas dentro del pool DHCP de FortiGate */
-    const rips = (v.reserved_ips || []).filter(r => r.ip4);
-    if (rips.length > 0) {
-      c += `        config reserved-address
-`;
-      rips.forEach((r, idx) => {
-        c += `            edit ${idx + 1}
-                set ip ${r.ip4}
-                set mac XX:XX:XX:XX:XX:XX
-                set description "${r.alias}"
-                set action reserved
-            next
-`;
-      });
-      c += `        end
+    if (S.ipv6 && v.gateway_v6) {
+      const fwV6 = v.gateway_v6.replace('::1', '::2');
+      c += `        set ip6-address ${fwV6}/64
+        set ip6-allowaccess ping https ssh
 `;
     }
     c += `    next
@@ -1757,7 +1713,86 @@ end
 `;
   });
 
-  /* IPv6 reservas — comentario informativo */
+  c += `# ─── Política de salida LAN → WAN (NAT) ─────────────────────\n`;
+  S.vlans.forEach((v, idx) => {
+    c += `config firewall policy
+    edit ${idx + 1}
+        set name "${v.name}-to-WAN"
+        set srcintf "lan-vlan${v.id}"
+        set dstintf "wan1"
+        set srcaddr "all"
+        set dstaddr "all"
+        set action accept
+        set schedule "always"
+        set service "ALL"
+        set nat enable
+        set logtraffic all
+    next
+end
+#
+`;
+  });
+
+  c += `# ─── Rutas estáticas hacia el Core Switch ───────────────────\n`;
+  S.vlans.forEach((v, idx) => {
+    c += `config router static
+    edit ${idx + 1}
+        set dst ${v.network} ${v.mask}
+        set gateway ${coreIP}
+        set device "lan-vlan${v.id}"
+    next
+end
+#
+`;
+  });
+
+  if (S.wan_routes.length > 0 && S.wan_nexthop) {
+    c += `# ─── Rutas estáticas WAN ────────────────────────────────────\n`;
+    S.wan_routes.forEach((route, idx) => {
+      const p = parseCIDR(route);
+      if (!p) return;
+      c += `config router static
+    edit ${100 + idx}
+        set dst ${p.address} ${prefixToMask(p.prefix)}
+        set gateway ${S.wan_nexthop}
+        set device "wan1"
+    next
+end
+#
+`;
+    });
+  }
+
+  c += `# ─── Servidor DHCP por VLAN ─────────────────────────────────\n`;
+  c += `# El FW actúa como relay para cada VLAN.\n#\n`;
+
+  S.vlans.forEach(v => {
+    const fwIp = intToIp(ipToInt(v.gateway_v4) + 1);
+    c += `config system dhcp server\n`;
+    c += `    edit 0\n`;
+    c += `        set dns-server1 ${S.dns4}\n`;
+    c += `        set default-gateway ${fwIp}\n`;
+    c += `        set netmask ${v.mask}\n`;
+    c += `        set interface "lan-vlan${v.id}"\n`;
+    c += `        set dns-service default\n`;
+    c += `        set domain ${S.domain}\n`;
+    c += `        config ip-range\n            edit 1\n`;
+    const poolStart = intToIp(ipToInt(v.gateway_v4) + 10);
+    const poolEnd   = intToIp(ipToInt(v.broadcast) - 1);
+    c += `                set start-ip ${poolStart}\n                set end-ip ${poolEnd}\n`;
+    c += `            next\n        end\n`;
+
+    const rips = (v.reserved_ips || []).filter(r => r.ip4);
+    if (rips.length > 0) {
+      c += `        config reserved-address\n`;
+      rips.forEach((r, idx) => {
+        c += `            edit ${idx + 1}\n                set ip ${r.ip4}\n                set mac XX:XX:XX:XX:XX:XX\n                set description "${r.alias}"\n                set action reserved\n            next\n`;
+      });
+      c += `        end\n`;
+    }
+    c += `    next\nend\n#\n`;
+  });
+
   const vlansWithResF = S.vlans.filter(v => (v.reserved_ips || []).some(r => r.ip6));
   if (vlansWithResF.length > 0 && S.ipv6) {
     c += `# ─── Reservas IPv6 (asignación manual recomendada) ──────────\n`;
@@ -1772,29 +1807,11 @@ end
   return c;
 }
 
-/** IP del Core Switch: gateway de VLAN 60. */
-function getCoreIP() {
-  const v60 = S.vlans.find(v => v.id === 60);
-  return v60 ? v60.gateway_v4 : '(IP_CORE)';
-}
 
 /* ══════════════════════════════════════════════════════════════
-   14. PASO 6 — EXPORTAR
-   ── Funciones:
-      selectExportTab()     selecciona tab de vendor
-      renderExportCode()    muestra config en pantalla
-      copyCode()            copia al portapapeles
-      generateRollback()    genera borrado seguro por vendor
-      generateTopologySVG() genera topología lógica SVG
-      buildExportHTML()     ensambla HTML completo del plan
-      downloadPlan()        descarga HTML autocontenido
+   14. PASO 6 — EXPORTAR (BLOQUES, COPY, TXT, ZIP)
    ══════════════════════════════════════════════════════════════ */
 
-/**
- * Selecciona el tab de exportación principal.
- * Para la pestaña "Borrado Seguro": muestra el sub-selector de vendor
- * y sincroniza su botón activo con S.rollback_vendor.
- */
 function selectExportTab(btn) {
   document.querySelectorAll('.export-tab').forEach(t => t.classList.remove('active'));
   btn.classList.add('active');
@@ -1802,7 +1819,6 @@ function selectExportTab(btn) {
 
   const subtabs = document.getElementById('rollback-subtabs');
   if (S.export_vendor === 'rollback') {
-    /* Asegurar default y sincronizar UI del sub-selector */
     if (!S.rollback_vendor) S.rollback_vendor = 'cisco';
     document.querySelectorAll('.rb-subtab').forEach(t =>
       t.classList.toggle('active', t.dataset.vendor === S.rollback_vendor)
@@ -1815,10 +1831,6 @@ function selectExportTab(btn) {
   renderExportCode();
 }
 
-/**
- * Selecciona el vendor cuyo borrado seguro se va a mostrar.
- * Solo se usa cuando la pestaña "Borrado Seguro" está activa.
- */
 function selectRollbackVendor(btn) {
   document.querySelectorAll('.rb-subtab').forEach(t => t.classList.remove('active'));
   btn.classList.add('active');
@@ -1826,57 +1838,193 @@ function selectRollbackVendor(btn) {
   renderExportCode();
 }
 
-/** Genera y muestra la config del vendor activo en el área de código. */
+/**
+ * Render principal del Paso 6: pinta bloques por dispositivo
+ * según el vendor activo, cada uno con Copiar y Descargar .txt.
+ */
 function renderExportCode() {
-  const codeEl = document.getElementById('export-code');
-  if (!codeEl) return;
-  const map = {
-    cisco:    generateCiscoConfig,
-    huawei:   generateHuaweiConfig,
-    fortinet: generateFortinetConfig,
-    rollback: generateRollback,   // borrado seguro del vendor con más reciente selección
-  };
-  codeEl.textContent = (map[S.export_vendor] || (() => '— Selecciona un vendor —'))();
+  const container = document.getElementById('export-blocks');
+  if (!container) return;
+
+  if (!S.vlans.length) {
+    container.innerHTML = '<p class="placeholder-msg">Completa el plan antes de generar configuraciones</p>';
+    document.getElementById('export-zip-bar')?.classList.add('hidden');
+    return;
+  }
+
+  let blocks = [];
+
+  if (S.export_vendor === 'cisco')    blocks = generateCiscoConfig();
+  if (S.export_vendor === 'huawei')   blocks = generateHuaweiConfig();
+  if (S.export_vendor === 'fortinet') blocks = generateFortinetConfig();
+  if (S.export_vendor === 'rollback') blocks = generateRollback();
+
+  container.innerHTML = blocks.map((b, idx) => `
+    <div class="device-block">
+      <div class="device-block-header">
+        <div class="device-block-title">
+          <span class="device-block-hostname">${escHtml(b.hostname)}</span>
+          <span class="device-block-role">${escHtml(b.role)}</span>
+        </div>
+        <div class="device-block-actions">
+          <button class="device-block-btn" onclick="copyBlock(${idx})" title="Copiar al portapapeles">⧉ Copiar</button>
+          <button class="device-block-btn" onclick="downloadBlockTxt(${idx})" title="Descargar como archivo .txt">↓ .txt</button>
+        </div>
+      </div>
+      <pre class="device-block-code" id="device-block-code-${idx}"><code>${escHtml(b.content)}</code></pre>
+    </div>
+  `).join('');
+
+  /* Guardar bloques en una propiedad temporal del contenedor para los handlers */
+  container._blocks = blocks;
+
+  /* Mostrar barra de "Descargar todo" si hay más de 1 bloque */
+  const zipBar = document.getElementById('export-zip-bar');
+  if (zipBar) {
+    if (blocks.length > 1 && S.export_vendor !== 'rollback') {
+      zipBar.classList.remove('hidden');
+    } else {
+      zipBar.classList.add('hidden');
+    }
+  }
 }
 
-/** Copia el contenido visible al portapapeles. */
-function copyCode() {
-  const el = document.getElementById('export-code');
-  if (!el) return;
-  navigator.clipboard.writeText(el.textContent)
-    .then(() => showToast('Configuración copiada al portapapeles', 'success'))
+/** Copia el contenido de un bloque al portapapeles. */
+function copyBlock(idx) {
+  const container = document.getElementById('export-blocks');
+  if (!container?._blocks?.[idx]) return;
+  const text = container._blocks[idx].content;
+  navigator.clipboard.writeText(text)
+    .then(() => showToast(`Configuración de ${container._blocks[idx].hostname} copiada`, 'success'))
     .catch(() => showToast('No se pudo copiar', 'error'));
 }
 
-/* ── BORRADO SEGURO (rollback inverso) ──────────────────────────
-   Genera los comandos exactos inversos de la configuración aplicada.
-   NO toca la imagen IOS/VRP/FortiOS — solo deshace la config de red.
-   ─────────────────────────────────────────────────────────────── */
+/** Descarga un bloque como archivo .txt. */
+function downloadBlockTxt(idx) {
+  const container = document.getElementById('export-blocks');
+  const block = container?._blocks?.[idx];
+  if (!block) return;
 
-/**
- * Genera el borrado seguro del vendor seleccionado en el sub-selector.
- * Estrategia: comandos "no/undo/delete" en orden inverso al de aplicación.
- */
-function generateRollback() {
-  switch (S.rollback_vendor) {
-    case 'cisco':    return generateRollbackCisco();
-    case 'huawei':   return generateRollbackHuawei();
-    case 'fortinet': return generateRollbackFortinet();
-    default:         return generateRollbackCisco();
+  const date = new Date().toISOString().slice(0, 10);
+  const vendor = S.export_vendor;
+  const safeHost = block.hostname.replace(/[^a-zA-Z0-9_\-]/g, '_');
+  const filename = `${safeHost}_${vendor}_${date}.txt`;
+
+  const blob = new Blob([block.content], { type: 'text/plain;charset=utf-8' });
+  _download(blob, filename);
+  showToast(`Descargado: ${filename}`, 'success');
+}
+
+/** Carga JSZip desde CDN una sola vez. */
+function _loadJSZip() {
+  return _loadScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js');
+}
+
+/** Descarga todos los bloques del vendor activo en un .zip. */
+async function downloadAllConfigsZip() {
+  if (!S.vlans.length) {
+    showToast('Completa el plan antes de exportar', 'error');
+    return;
   }
+
+  showToast('Preparando archivo zip…', 'success');
+
+  try {
+    await _loadJSZip();
+  } catch (e) {
+    showToast('No se pudo cargar JSZip. Verifica tu conexión.', 'error');
+    return;
+  }
+
+  let blocks = [];
+  const vendor = S.export_vendor;
+  if (vendor === 'cisco')    blocks = generateCiscoConfig();
+  if (vendor === 'huawei')   blocks = generateHuaweiConfig();
+  if (vendor === 'fortinet') blocks = generateFortinetConfig();
+  if (!blocks.length) return;
+
+  const date = new Date().toISOString().slice(0, 10);
+  const zip = new window.JSZip();
+
+  blocks.forEach(b => {
+    const safeHost = b.hostname.replace(/[^a-zA-Z0-9_\-]/g, '_');
+    const filename = `${safeHost}_${vendor}_${date}.txt`;
+    zip.file(filename, b.content);
+  });
+
+  /* README dentro del zip */
+  const readme = `NetPlan Pro v4.6 — Paquete de configuración
+==============================================
+Dominio:        ${S.domain}
+Vendor:         ${vendor}
+Generado:       ${new Date().toLocaleString('es-CO')}
+Dispositivos:   ${blocks.length}
+
+Contenido:
+${blocks.map(b => `  - ${b.hostname.padEnd(16)} ${b.role}`).join('\n')}
+
+ADVERTENCIA: Estas configuraciones son una base de despliegue.
+Antes de aplicar en producción revisa hardening adicional:
+  - SSH-only, AAA, banners, exec-timeout
+  - Spanning-Tree root bridge explícito
+  - ACLs inter-VLAN (matriz de comunicación)
+  - 802.1X / NAC si aplica
+`;
+  zip.file('README.txt', readme);
+
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const safeDom = (S.domain || 'plan').toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const filename = `${safeDom}_${vendor}_configs.zip`;
+  _download(blob, filename);
+
+  showToast(`Descargado: ${filename}`, 'success');
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   14b. ROLLBACK / BORRADO SEGURO
+   ══════════════════════════════════════════════════════════════ */
+
+function generateRollback() {
+  /* Rollback se mantiene como bloque único por vendor */
+  let content = '';
+  let hostname = '';
+  let role = '';
+
+  switch (S.rollback_vendor) {
+    case 'cisco':
+      content = generateRollbackCisco();
+      hostname = 'CORE-SW-01';
+      role = 'Rollback Cisco IOS/XE';
+      break;
+    case 'huawei':
+      content = generateRollbackHuawei();
+      hostname = 'CORE-SW-01';
+      role = 'Rollback Huawei VRP';
+      break;
+    case 'fortinet':
+      content = generateRollbackFortinet();
+      hostname = 'FG-CORP-01';
+      role = 'Rollback FortiGate';
+      break;
+    default:
+      content = generateRollbackCisco();
+      hostname = 'CORE-SW-01';
+      role = 'Rollback Cisco IOS/XE';
+  }
+  return [{ hostname, role, content }];
 }
 
 function generateRollbackCisco() {
   const fw = getFWip();
   let c = `! ════════════════════════════════════════════════════════════
-! NetPlan Pro v4.0 — BORRADO SEGURO — Cisco IOS/XE — CORE-SW-01
+! NetPlan Pro v4.6 — BORRADO SEGURO — Cisco IOS/XE — CORE-SW-01
 ! ADVERTENCIA: Aplica SOLO si deseas deshacer el plan completo.
 ! Esta config NO borra la imagen IOS ni el sistema operativo.
 ! Ejecutar en modo configuración: conf t
 ! ════════════════════════════════════════════════════════════
 !\n`;
 
-  // 1. Rutas estáticas
   c += `! ─── Eliminar rutas estáticas ───────────────────────────────\n`;
   c += `no ip route 0.0.0.0 0.0.0.0 ${fw}\n`;
   if (S.ipv6) c += `no ipv6 route ::/0\n`;
@@ -1886,7 +2034,6 @@ function generateRollbackCisco() {
   });
   c += `!\n`;
 
-  // 2. Pools DHCP
   c += `! ─── Eliminar pools DHCP IPv4 ───────────────────────────────\n`;
   S.vlans.forEach(v => {
     const nm = v.name.replace(/\s/g, '_');
@@ -1898,15 +2045,13 @@ function generateRollbackCisco() {
   });
   c += `!\n`;
 
-  // 3. DHCPv6
   if (S.ipv6) {
     c += `! ─── Eliminar pools DHCPv6 ──────────────────────────────────\n`;
     S.vlans.forEach(v => c += `no ipv6 dhcp pool VLAN${v.id}-v6\n`);
     c += `!\n`;
   }
 
-  // 4. SVIs
-  c += `! ─── Eliminar SVIs (interfaces VLAN L3) ─────────────────────\n`;
+  c += `! ─── Eliminar SVIs ──────────────────────────────────────────\n`;
   [...S.vlans].reverse().forEach(v => {
     c += `interface Vlan${v.id}\n no ip address\n`;
     if (S.ipv6) c += ` no ipv6 address\n no ipv6 nd other-config-flag\n`;
@@ -1914,12 +2059,10 @@ function generateRollbackCisco() {
     c += `no interface Vlan${v.id}\n!\n`;
   });
 
-  // 5. VLANs
   c += `! ─── Eliminar VLANs ─────────────────────────────────────────\n`;
   S.vlans.forEach(v => c += `no vlan ${v.id}\n`);
   c += `!\n`;
 
-  // 6. LACP si aplica
   if (S.redundancia === 'dual') {
     c += `! ─── Deshacer Dual-Link LACP ────────────────────────────────\n`;
     c += `no interface Port-channel1\n`;
@@ -1927,7 +2070,6 @@ function generateRollbackCisco() {
     c += `interface GigabitEthernet1/0/48\n no channel-group\n!\n`;
   }
 
-  // 7. Limpiar startup-config
   c += `! ─── Limpiar configuración guardada ────────────────────────\n`;
   c += `! (Opcional) Para dejar el equipo sin configuración guardada:\n`;
   c += `! write erase\n! reload\n`;
@@ -1937,7 +2079,7 @@ function generateRollbackCisco() {
 function generateRollbackHuawei() {
   const fw = getFWip();
   let c = `# ════════════════════════════════════════════════════════════
-# NetPlan Pro v4.0 — BORRADO SEGURO — Huawei VRP — CORE-SW-01
+# NetPlan Pro v4.6 — BORRADO SEGURO — Huawei VRP — CORE-SW-01
 # ADVERTENCIA: Aplica SOLO si deseas deshacer el plan completo.
 # Esta config NO borra la imagen VRP ni el sistema operativo.
 # ════════════════════════════════════════════════════════════
@@ -1994,7 +2136,7 @@ function generateRollbackHuawei() {
 
 function generateRollbackFortinet() {
   let c = `# ════════════════════════════════════════════════════════════
-# NetPlan Pro v4.0 — BORRADO SEGURO — FortiGate — FG-CORP-01
+# NetPlan Pro v4.6 — BORRADO SEGURO — FortiGate — FG-CORP-01
 # ADVERTENCIA: Aplica SOLO si deseas deshacer el plan completo.
 # Esta config NO borra FortiOS ni licencias del equipo.
 # ════════════════════════════════════════════════════════════
@@ -2026,31 +2168,14 @@ function generateRollbackFortinet() {
   return c;
 }
 
-/* ── TOPOLOGÍA SVG ───────────────────────────────────────────────
-   Genera diagrama lógico jerárquico: FW → Core → Access Switches
-   con etiquetas de VLANs y direcciones IP. Sin dependencias externas.
-   ─────────────────────────────────────────────────────────────── */
 
-/**
- * Genera un SVG de topología lógica con los datos del plan actual.
- * Layout: Internet → Firewall → Core Switch → Switch por piso (columnas)
- */
-/**
- * Genera la topología lógica como SVG.
- *
- * Mejoras vs versión anterior:
- *  - Layout dinámico: ancho/alto se calculan según pisos y VLANs reales
- *  - Soporta dual-link: dibuja doble línea con etiqueta "Po1 (LACP)"
- *  - No trunca VLANs: si hay muchas, fluyen en filas debajo del switch
- *  - Diferencia visual Core L3 (azul oscuro) vs Access L2 (azul claro)
- *  - Cuenta switches por piso según hosts_piso/puertos
- *  - Anotaciones de WAN routes y DNS si están definidos
- *  - Modo wrap para 6+ pisos: dispone los switches en filas
- */
+/* ══════════════════════════════════════════════════════════════
+   14c. TOPOLOGÍA SVG + DRAWIO
+   ══════════════════════════════════════════════════════════════ */
+
 function generateTopologySVG() {
   if (!S.vlans.length) return '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
 
-  /* ── Paleta (coherente con la app) ── */
   const CLR = {
     accent:'#1a6fc4', accentDk:'#0f4d8f', accentLt:'#e8f0fb',
     ok:'#1a7a4a', okBg:'#e8f5ee',
@@ -2065,96 +2190,82 @@ function generateTopologySVG() {
     voip:CLR.voip, wifi:CLR.purple, mgmt:CLR.warn, custom:CLR.muted,
   };
 
-  /* ── Configuración de layout ── */
   const pisos     = S.pisos;
   const dual      = S.redundancia === 'dual';
   const swPerPiso = Math.max(1, Math.ceil((S.hosts_piso || 0) / S.puertos));
 
-  /* Modo wrap: si hay más de 5 pisos, los switches se disponen en filas */
   const WRAP_AT       = 5;
-  const swPerRow      = pisos > WRAP_AT ? Math.ceil(pisos / Math.ceil(pisos / WRAP_AT)) : pisos;
-  const switchRows    = Math.ceil(pisos / swPerRow);
+  const swPerRow      = pisos > WRAP_AT ? Math.ceil(pisos / 2) : pisos;
+  const rows          = pisos > WRAP_AT ? 2 : 1;
+  const chipsPerRow   = 4;
+  const colW          = 150;
+  const margin        = 20;
+  const inetY         = 36, inetH = 28;
+  const fwY           = 88, fwH = 36;
+  const coreY         = 156, coreH = 48;
+  const swH           = 42;
+  const swStartY      = 250;
+  const swRowGap      = 180;
+  const legendH       = 30;
 
-  /* Anchos */
-  const colW         = 170;          // ancho por columna (switch)
-  const margin       = 50;
-  const svgW         = Math.max(720, margin * 2 + colW * swPerRow);
+  /* Calcular altura del SVG según VLANs por switch */
+  const maxVlansPerSw = Math.max(...Array.from({ length: pisos }, (_, i) => {
+    const fl = i + 1;
+    return S.vlans.filter(v =>
+      v.floor === 'all' || (v.floor === 'core' && fl === S.core_piso)
+    ).length;
+  }));
+  const chipsRows = Math.ceil(maxVlansPerSw / chipsPerRow);
+  const chipH = 14;
+  const chipsBlockH = chipsRows * (chipH + 4) + 14;
 
-  /* VLAN chips: cuántas caben por fila bajo cada switch */
-  const chipW        = 44;
-  const chipH        = 18;
-  const chipGap      = 4;
-  const chipsPerRow  = Math.max(2, Math.floor((colW - 8) / (chipW + chipGap)));
+  const svgW = Math.max(700, margin * 2 + swPerRow * colW);
+  const svgH = swStartY + rows * (swH + chipsBlockH + 20) + legendH + 30;
 
-  /* Calcular cuántas filas de chips necesita cada switch */
+  const cx = svgW / 2;
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+
+  /* Calcular posiciones de switches */
+  const swPos = [];
+  for (let fl = 1; fl <= pisos; fl++) {
+    const rowIdx = Math.floor((fl - 1) / swPerRow);
+    const colIdx = (fl - 1) % swPerRow;
+    const rowSize = (rowIdx === rows - 1 && pisos % swPerRow !== 0) ? (pisos % swPerRow) : swPerRow;
+    const totalRowW = rowSize * colW;
+    const startX = cx - totalRowW / 2 + colW / 2;
+    swPos.push({
+      floor: fl,
+      isCore: fl === S.core_piso,
+      x: startX + colIdx * colW,
+      y: swStartY + rowIdx * (swH + chipsBlockH + 20),
+    });
+  }
+
   const floorVlans = (fl) => S.vlans.filter(v =>
     v.floor === 'all' || (v.floor === 'core' && fl === S.core_piso)
   );
-  const maxVlansPerSw = Math.max(...Array.from({length: pisos}, (_, i) => floorVlans(i+1).length), 1);
-  const maxChipRows   = Math.ceil(maxVlansPerSw / chipsPerRow);
 
-  /* Alturas dinámicas */
-  const headerH      = 60;
-  const inetH        = 50;   // altura ocupada por nodo internet
-  const fwH          = 50;
-  const coreH        = 60;
-  const swH          = 50;
-  const chipsBlockH  = maxChipRows * (chipH + 4) + 8;
-  const vGap         = 70;   // separación vertical entre niveles
-  const rowGap       = 30;   // separación entre filas de switches en wrap mode
-  const legendH      = 40;
-  const footerH      = 20;
+  const chipW = 28, chipGap = 4;
 
-  /* Coordenadas Y de cada nivel */
-  const inetY  = headerH + inetH/2;
-  const fwY    = inetY  + inetH/2 + vGap + fwH/2;
-  const coreY  = fwY    + fwH/2   + vGap + coreH/2;
-  const swYs   = [];
-  for (let r = 0; r < switchRows; r++) {
-    const y = coreY + coreH/2 + vGap + r * (swH + chipsBlockH + rowGap) + swH/2;
-    swYs.push(y);
-  }
-  const svgH = swYs[swYs.length - 1] + swH/2 + chipsBlockH + legendH + footerH;
-
-  /* Coordenadas X de switches */
-  const cx = svgW / 2;
-  const swPos = [];                 // [{x, y, floor, isCore}]
-  for (let i = 0; i < pisos; i++) {
-    const row     = Math.floor(i / swPerRow);
-    const col     = i % swPerRow;
-    const colsRow = (row === switchRows - 1)
-      ? (pisos - row * swPerRow)
-      : swPerRow;
-    /* Centrar la última fila si quedó incompleta */
-    const x = svgW/2 - (colsRow * colW)/2 + colW/2 + col * colW;
-    swPos.push({ x, y: swYs[row], floor: i + 1, isCore: (i + 1) === S.core_piso });
-  }
-
-  /* ── Helpers de dibujo ── */
-  const esc = escHtml;
-  function node(x, y, w, h, fill, stroke, label, sub='', strokeW=1.5) {
-    return `<rect x="${x-w/2}" y="${y-h/2}" width="${w}" height="${h}" rx="8"
-        fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}"/>
-      <text x="${x}" y="${y-3}" text-anchor="middle" font-family="'DM Mono',monospace"
-        font-size="11" font-weight="600" fill="${CLR.text}">${esc(label)}</text>
-      ${sub ? `<text x="${x}" y="${y+12}" text-anchor="middle" font-family="monospace"
+  function node(x, y, w, h, fill, stroke, label, sub, sw = 1.5) {
+    return `
+      <rect x="${x - w/2}" y="${y - h/2}" width="${w}" height="${h}" rx="6"
+        fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>
+      <text x="${x}" y="${y - 2}" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif"
+        font-size="11" font-weight="600" fill="${stroke}">${esc(label)}</text>
+      ${sub ?
+        `<text x="${x}" y="${y+12}" text-anchor="middle" font-family="monospace"
         font-size="9.5" fill="${CLR.muted}">${esc(sub)}</text>` : ''}`;
   }
 
-  /**
-   * Línea entre nodos. Si dual=true, dibuja DOS líneas paralelas con
-   * etiqueta "Po (LACP)" para representar EtherChannel/Eth-Trunk.
-   * Si dual=false, una sola línea con flecha.
-   */
   function link(x1, y1, x2, y2, isDual = dual) {
     if (!isDual) {
       return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
         stroke="${CLR.borderStrong}" stroke-width="1.6"/>`;
     }
-    /* Dos líneas paralelas separadas por offset perpendicular */
     const dx = x2 - x1, dy = y2 - y1;
     const len = Math.sqrt(dx*dx + dy*dy) || 1;
-    const offX = (-dy / len) * 3;   // offset perpendicular ±3px
+    const offX = (-dy / len) * 3;
     const offY = (dx / len) * 3;
     const mx = (x1 + x2) / 2;
     const my = (y1 + y2) / 2;
@@ -2169,43 +2280,35 @@ function generateTopologySVG() {
         font-size="8" font-weight="600" fill="${CLR.accent}">LACP</text>`;
   }
 
-  /* ── Construir nodos ── */
   let svg = '';
 
-  /* Líneas Internet → FW → Core (siempre simples) */
   svg += `<line x1="${cx}" y1="${inetY+inetH/2}" x2="${cx}" y2="${fwY-fwH/2}"
     stroke="${CLR.borderStrong}" stroke-width="1.6"/>`;
   svg += `<line x1="${cx}" y1="${fwY+fwH/2}" x2="${cx}" y2="${coreY-coreH/2}"
     stroke="${CLR.borderStrong}" stroke-width="1.6"/>`;
 
-  /* Líneas Core → switches de acceso (con dual-link si aplica) */
   swPos.forEach(sp => {
-    if (sp.isCore) return;          // el switch core es el mismo del centro
+    if (sp.isCore) return;
     svg += link(cx, coreY + coreH/2, sp.x, sp.y - swH/2);
   });
 
-  /* Internet */
   svg += node(cx, inetY, 130, inetH, CLR.warnBg, '#f59e0b',
     'INTERNET / WAN',
     S.wan_nexthop ? `Next-hop: ${S.wan_nexthop}` : '');
 
-  /* Firewall */
   svg += node(cx, fwY, 170, fwH, CLR.errBg, '#f87171',
     'FIREWALL — FW-01',
     `IP Gestión: ${getFWip()}`);
 
-  /* Core Switch (más grande, color destacado) */
   svg += node(cx, coreY, 220, coreH, CLR.accentLt, CLR.accentDk,
     'CORE SWITCH L3',
     `${S.vlans.length} SVIs · ${getCoreIP()} · Piso ${S.core_piso}`, 2);
 
-  /* Anotación de routing — la pongo encima del core para evitar
-     que las líneas LACP que bajan al core se le superpongan */
   svg += `<text x="${cx}" y="${coreY - coreH/2 - 8}" text-anchor="middle"
     font-size="9" fill="${CLR.muted}" font-family="monospace">
-    Inter-VLAN via SVIs · Default → FW · ${dual ? 'Uplinks LACP (2x)' : 'Uplinks Single-Link'}</text>`;
+    Inter-VLAN via SVIs · Default → FW · ${dual ?
+    'Uplinks LACP (2x)' : 'Uplinks Single-Link'}</text>`;
 
-  /* Switches de acceso + chips de VLANs */
   swPos.forEach(sp => {
     const vstk     = floorVlans(sp.floor);
     const isCore   = sp.isCore;
@@ -2218,7 +2321,6 @@ function generateTopologySVG() {
 
     svg += node(sp.x, sp.y, colW - 16, swH, fill, stroke, lbl, subLbl, isCore ? 2 : 1.5);
 
-    /* Chips de VLAN — TODAS, sin truncar, en múltiples filas */
     const chipsStartX = sp.x - colW/2 + 4;
     const chipsStartY = sp.y + swH/2 + 12;
     vstk.forEach((v, vi) => {
@@ -2233,12 +2335,10 @@ function generateTopologySVG() {
           font-family="monospace" font-size="8.5" font-weight="700" fill="${clr}">V${v.id}</text>`;
     });
 
-    /* Línea sutil del switch a sus chips */
     svg += `<line x1="${sp.x}" y1="${sp.y + swH/2}" x2="${sp.x}" y2="${chipsStartY - 2}"
       stroke="${CLR.border}" stroke-width="1" stroke-dasharray="2,2"/>`;
   });
 
-  /* ── Leyenda de tipos VLAN al pie ── */
   const usedTypes = [...new Set(S.vlans.map(v => v.type))];
   const legendY   = svgH - legendH;
   let legend      = '';
@@ -2251,14 +2351,9 @@ function generateTopologySVG() {
         fill="${CLR.text}" font-family="sans-serif">${esc(t)}</text>`;
   });
 
-  /* ── SVG final ── */
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${svgW} ${svgH}"
     width="${svgW}" height="${svgH}" preserveAspectRatio="xMidYMid meet">
-
-    <!-- fondo -->
     <rect width="${svgW}" height="${svgH}" fill="#fbfcfd" rx="12"/>
-
-    <!-- título -->
     <text x="${margin}" y="26" font-family="'DM Mono',monospace"
       font-size="14" font-weight="600" fill="${CLR.accent}">
       Topología Lógica — ${esc(S.domain)}</text>
@@ -2267,142 +2362,50 @@ function generateTopologySVG() {
       ${S.ipv6 ? 'Dual Stack (IPv4+IPv6)' : 'IPv4'} ·
       ${dual ? 'Redundancia: Dual-Link LACP' : 'Redundancia: Single-Link'} ·
       ${pisos} piso${pisos !== 1 ? 's' : ''} · ${S.vlans.length} VLAN${S.vlans.length !== 1 ? 's' : ''}</text>
-
     ${svg}
-
-    <!-- leyenda -->
     ${legend}
   </svg>`;
 }
 
-/* ── GENERADORES DE TOPOLOGÍA EDITABLE ──────────────────────────
-   Tres formatos adicionales al SVG inline:
-     · Mermaid  → texto plano que renderiza GitHub/Notion/Confluence
-     · drawio   → XML editable en draw.io / diagrams.net
-   Ambos preservan jerarquía Internet → FW → Core → Access + VLANs.
-   ─────────────────────────────────────────────────────────────── */
-
-/**
- * Genera código Mermaid (graph TD) listo para pegar en markdown.
- * GitHub, Notion y Confluence lo renderizan automáticamente.
- */
-function generateMermaid() {
-  if (!S.vlans.length) return '';
-
-  const dual = S.redundancia === 'dual';
-  const linkStyle = dual ? '===' : '-->';   // === = línea gruesa para LACP
-
-  const floorVlans = (fl) => S.vlans.filter(v =>
-    v.floor === 'all' || (v.floor === 'core' && fl === S.core_piso)
-  );
-
-  let m = '';
-  m += '%%{init: {"theme":"base","themeVariables":{"primaryColor":"#e8f0fb","primaryBorderColor":"#1a6fc4","lineColor":"#94a3b8"}}}%%\n';
-  m += 'graph TD\n';
-
-  /* Cabecera de la red */
-  m += `    INET["☁ Internet / WAN${S.wan_nexthop ? '<br/>'+S.wan_nexthop : ''}"]\n`;
-  m += `    FW["🛡 FW-01<br/>${getFWip()}"]\n`;
-  m += `    CORE["⚡ CORE L3<br/>${getCoreIP()}<br/>${S.vlans.length} SVIs"]\n`;
-  m += `    INET --> FW\n`;
-  m += `    FW --> CORE\n\n`;
-
-  /* Switches por piso */
-  for (let fl = 1; fl <= S.pisos; fl++) {
-    const isCore = fl === S.core_piso;
-    const swId   = `SW${fl}`;
-    const lbl    = isCore
-      ? `🟦 SW-CORE P${fl}<br/>Core L3 + Access`
-      : `SW-ACC P${fl}<br/>L2 Access`;
-    m += `    ${swId}["${lbl}"]\n`;
-    if (!isCore) {
-      /* Edge desde core a switch — con etiqueta LACP si dual */
-      m += `    CORE ${linkStyle}${dual ? '|"LACP/Po1"|' : ''} ${swId}\n`;
-    }
-
-    /* VLANs de este switch como subnodos */
-    const vstk = floorVlans(fl);
-    vstk.forEach(v => {
-      const vId   = `V${v.id}_P${fl}`;
-      const stack = v.network ? `${v.network}/${v.prefix}` : '';
-      m += `    ${vId}(["VLAN ${v.id}<br/>${v.name}<br/>${stack}"])\n`;
-      m += `    ${swId} --- ${vId}\n`;
-    });
-  }
-
-  /* Estilos por tipo de VLAN */
-  m += '\n';
-  const typeColor = {
-    users:'#1a6fc4', admin:'#1a7a4a', servers:'#7c3aed',
-    voip:'#0891b2', wifi:'#7c3aed', mgmt:'#875a00', custom:'#718096',
-  };
-  S.vlans.forEach(v => {
-    for (let fl = 1; fl <= S.pisos; fl++) {
-      const inFloor = v.floor === 'all' || (v.floor === 'core' && fl === S.core_piso);
-      if (!inFloor) continue;
-      const c = typeColor[v.type] || '#718096';
-      m += `    style V${v.id}_P${fl} fill:${c}1a,stroke:${c},color:${c}\n`;
-    }
-  });
-
-  /* Estilo del Core destacado */
-  m += `    style CORE fill:#e8f0fb,stroke:#0f4d8f,stroke-width:3px\n`;
-  m += `    style FW   fill:#fef2f2,stroke:#c0392b\n`;
-  m += `    style INET fill:#fff7ed,stroke:#f59e0b\n`;
-
-  return m;
-}
-
-/**
- * Genera XML compatible con draw.io / diagrams.net.
- * El usuario lo abre en https://app.diagrams.net y puede editarlo
- * libremente: mover nodos, cambiar estilos, exportar a PNG/PDF, etc.
- *
- * Formato: mxGraphModel → root con cells. Cada cell tiene un id único,
- * un parent ("1" = raíz), un style mxGraph, y geometry (x,y,w,h).
- */
 function generateDrawioXML() {
   if (!S.vlans.length) return '';
 
   const dual = S.redundancia === 'dual';
-  const esc  = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
-                      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const esc  = s => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
-  /* Estilos predefinidos (mxGraph syntax) */
   const STYLES = {
-    inet:   'rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#f59e0b;fontSize=11;fontStyle=1;',
-    fw:     'rounded=1;whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#c0392b;fontSize=11;fontStyle=1;',
-    core:   'rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f0fb;strokeColor=#0f4d8f;fontSize=12;fontStyle=1;strokeWidth=2;',
-    swCore: 'rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f0fb;strokeColor=#1a6fc4;fontSize=11;strokeWidth=2;',
-    swAcc:  'rounded=1;whiteSpace=wrap;html=1;fillColor=#f7f9fb;strokeColor=#94a3b8;fontSize=11;',
-    edge:   'edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#94a3b8;strokeWidth=1.5;endArrow=none;',
-    edgeDual:'edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1a6fc4;strokeWidth=2.5;endArrow=none;',
-    vlan:   (color) => `rounded=1;whiteSpace=wrap;html=1;fillColor=${color}1a;strokeColor=${color};fontSize=10;`,
+    inet:  'rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#f59e0b;fontColor=#92400e;fontSize=11;',
+    fw:    'rounded=1;whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#dc2626;fontColor=#7f1d1d;fontSize=11;',
+    core:  'rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f0fb;strokeColor=#1a6fc4;strokeWidth=2;fontColor=#0f4d8f;fontSize=12;fontStyle=1;',
+    swCore:'rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f0fb;strokeColor=#1a6fc4;fontColor=#1a6fc4;fontSize=11;fontStyle=1;',
+    swAcc: 'rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#94a3b8;fontColor=#1a2332;fontSize=10;',
+    vlan:  c => `rounded=1;whiteSpace=wrap;html=1;fillColor=${c}1a;strokeColor=${c};fontColor=${c};fontSize=9;`,
+    edge:  'endArrow=classic;html=1;rounded=0;strokeColor=#94a3b8;strokeWidth=1.5;',
+    edgeDual: 'endArrow=classic;html=1;rounded=0;strokeColor=#1a6fc4;strokeWidth=2;dashed=0;',
   };
+
   const TYPE_CLR = {
     users:'#1a6fc4', admin:'#1a7a4a', servers:'#7c3aed',
     voip:'#0891b2', wifi:'#7c3aed', mgmt:'#875a00', custom:'#718096',
   };
 
-  /* Layout en grid */
-  const colW   = 180,  rowH = 110;
-  const cx     = 600;
-  const inetY  = 40,   fwY = 160, coreY = 280, swY = 440;
-  const vlanY  = 580;
-
   let cells = '';
-  let id    = 100;
+  let id = 100;
+  const cx = 600;
+  const inetY = 40;
+  const fwY = 130;
+  const coreY = 230;
+  const swY = 380;
+  const vlanY = 480;
+  const colW = 200;
 
-  /* Cabecera vertical */
-  cells += `<mxCell id="inet" value="${esc('☁ Internet / WAN' + (S.wan_nexthop ? '\n' + S.wan_nexthop : ''))}" style="${STYLES.inet}" vertex="1" parent="1"><mxGeometry x="${cx-65}" y="${inetY}" width="130" height="50" as="geometry"/></mxCell>\n`;
+  cells += `<mxCell id="inet" value="${esc('☁ INTERNET / WAN' + (S.wan_nexthop ? '\n' + S.wan_nexthop : ''))}" style="${STYLES.inet}" vertex="1" parent="1"><mxGeometry x="${cx-65}" y="${inetY}" width="130" height="50" as="geometry"/></mxCell>\n`;
   cells += `<mxCell id="fw"   value="${esc('🛡 FW-01\n' + getFWip())}"           style="${STYLES.fw}"   vertex="1" parent="1"><mxGeometry x="${cx-85}" y="${fwY}"   width="170" height="50" as="geometry"/></mxCell>\n`;
   cells += `<mxCell id="core" value="${esc('⚡ CORE SWITCH L3\n' + getCoreIP() + '\n' + S.vlans.length + ' SVIs')}" style="${STYLES.core}" vertex="1" parent="1"><mxGeometry x="${cx-110}" y="${coreY}" width="220" height="60" as="geometry"/></mxCell>\n`;
 
-  /* Edges INET → FW → CORE */
   cells += `<mxCell id="e1" style="${STYLES.edge}" edge="1" parent="1" source="inet" target="fw"><mxGeometry relative="1" as="geometry"/></mxCell>\n`;
   cells += `<mxCell id="e2" style="${STYLES.edge}" edge="1" parent="1" source="fw"   target="core"><mxGeometry relative="1" as="geometry"/></mxCell>\n`;
 
-  /* Switches por piso (en fila horizontal, centrados sobre el core) */
   const pisos     = S.pisos;
   const totalW    = pisos * colW;
   const startX    = cx - totalW/2 + colW/2;
@@ -2428,7 +2431,6 @@ function generateDrawioXML() {
       cells += `<mxCell id="ec${fl}" value="${esc(lblEdge)}" style="${edgeStyle}" edge="1" parent="1" source="core" target="${swId}"><mxGeometry relative="1" as="geometry"/></mxCell>\n`;
     }
 
-    /* VLANs como nodos pequeños debajo del switch */
     const vstk = floorVlans(fl);
     vstk.forEach((v, vi) => {
       const vx = sx - 70 + (vi % 3) * 50;
@@ -2441,7 +2443,7 @@ function generateDrawioXML() {
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<mxfile host="app.diagrams.net" modified="${new Date().toISOString()}" agent="NetPlan Pro v4.0" version="22.0.0">
+<mxfile host="app.diagrams.net" modified="${new Date().toISOString()}" agent="NetPlan Pro v4.6" version="22.0.0">
   <diagram name="Topología — ${esc(S.domain)}" id="netplan">
     <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="900" math="0" shadow="0">
       <root>
@@ -2454,15 +2456,12 @@ ${cells}      </root>
 }
 
 
-/* ──────────────────────────────────────────────────────────────
-   LAZY LOAD DE LIBRERÍAS EXTERNAS (CDN)
-   Estas se cargan solo cuando el usuario pide ese formato,
-   manteniendo la página inicial liviana y sin npm install.
-   ────────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════
+   14d. EXPORTACIONES (Excel, JSON, Drawio)
+   ══════════════════════════════════════════════════════════════ */
 
 const _scriptCache = {};
 
-/** Carga un script externo una sola vez y devuelve una promesa. */
 function _loadScript(url) {
   if (_scriptCache[url]) return _scriptCache[url];
   _scriptCache[url] = new Promise((resolve, reject) => {
@@ -2478,17 +2477,6 @@ function _loadScript(url) {
   return _scriptCache[url];
 }
 
-
-/* ── EXPORTACIONES ALTERNATIVAS ─────────────────────────────────
-   Cuatro formatos adicionales al HTML completo:
-     · Excel (.xlsx) → tabla VLSM + reservas + métricas en hojas
-     · PDF           → resumen ejecutivo imprimible
-     · Mermaid       → texto pegable en markdown
-     · drawio        → XML editable en draw.io
-   Cada uno genera un archivo descargable independiente.
-   ─────────────────────────────────────────────────────────────── */
-
-/** Helper: dispara descarga de un blob. */
 function _download(blob, filename) {
   const a = document.createElement('a');
   a.href     = URL.createObjectURL(blob);
@@ -2497,20 +2485,13 @@ function _download(blob, filename) {
   URL.revokeObjectURL(a.href);
 }
 
-/** Nombre base para archivos exportados. */
 function _fileName(ext) {
   const date = new Date().toISOString().slice(0, 10);
   const dom  = (S.domain || 'plan').replace(/[^a-z0-9._-]/gi, '_');
   return `netplan_${dom}_${date}.${ext}`;
 }
 
-/* ── EXPORTACIÓN EXCEL (.xlsx) ──────────────────────────────────
-   Usa SheetJS desde CDN. Genera un libro con 4 hojas:
-     1. Resumen      → métricas globales del plan
-     2. VLSM IPv4    → tabla completa de subredes IPv4
-     3. VLSM IPv6    → tabla IPv6 (si está habilitado)
-     4. Reservas IP  → todas las IPs estáticas reservadas
-   ─────────────────────────────────────────────────────────────── */
+/* ── EXPORTACIÓN EXCEL v4.6 — 7 hojas con estilos ─────────────── */
 
 async function exportPlanExcel() {
   if (!S.vlans.length) {
@@ -2526,469 +2507,295 @@ async function exportPlanExcel() {
     return;
   }
   const XLSX = window.XLSX;
+  const wb = XLSX.utils.book_new();
 
-  /* Hoja 1: Resumen ejecutivo */
-  const totalReq  = S.vlans.reduce((s,v) => s + v.hosts_required, 0);
-  const totalUsf  = S.vlans.reduce((s,v) => s + v.hosts_useful,   0);
+  /* Helper: aplicar estilo de cabecera (color de fondo + bold + freeze) */
+  function styleHeader(ws, headerRow = 0, colCount, color = 'FF1A6FC4') {
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    for (let c = 0; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({ r: headerRow, c });
+      if (!ws[addr]) continue;
+      ws[addr].s = {
+        fill:   { fgColor: { rgb: color } },
+        font:   { bold: true, color: { rgb: 'FFFFFFFF' }, sz: 11 },
+        alignment: { horizontal: 'left', vertical: 'center' },
+        border: {
+          top:    { style: 'thin', color: { rgb: 'FF94A3B8' } },
+          bottom: { style: 'thin', color: { rgb: 'FF94A3B8' } },
+        },
+      };
+    }
+  }
+
+  const totalReq   = S.vlans.reduce((s,v) => s + v.hosts_required, 0);
+  const totalUsf   = S.vlans.reduce((s,v) => s + v.hosts_useful,   0);
   const efficiency = Math.round((totalReq / totalUsf) * 100);
-  const swPiso    = Math.ceil(S.hosts_piso / S.puertos);
+  const swPiso     = Math.ceil(S.hosts_piso / S.puertos);
 
+  /* ── Hoja 1: Resumen ejecutivo ── */
   const summary = [
-    ['NetPlan Pro v4.0 — Resumen del plan'],
-    ['Generado',            new Date().toLocaleString('es-CO')],
+    ['NetPlan Pro v4.6 — Resumen ejecutivo'],
+    [''],
+    ['Información general'],
     ['Dominio interno',     S.domain],
-    [],
-    ['INFRAESTRUCTURA'],
+    ['Generado',            new Date().toLocaleString('es-CO')],
+    ['Esquema',             'netplan.v1'],
+    [''],
+    ['Infraestructura'],
     ['Pisos',               S.pisos],
     ['Piso del Core / CPD', S.core_piso],
     ['Hosts por piso',      S.hosts_piso],
     ['Puertos por switch',  S.puertos],
     ['Switches por piso',   swPiso],
-    ['Switches totales',    swPiso * S.pisos],
+    ['Switches totales',    swPiso * (S.pisos - 1) + 1],  // SW-ACC × (pisos-1) + Core
     ['Redundancia',         S.redundancia === 'dual' ? 'Dual-Link (LACP)' : 'Single-Link'],
     ['Vendor',              S.vendor === 'cisco' ? 'Cisco IOS/XE' : 'Huawei VRP'],
-    ['Factor de crecimiento', S.growth_factor + 'x'],
-    [],
-    ['DIRECCIONAMIENTO IPv4'],
-    ['Red base',            (S.net && S.net.address+'/'+S.net.prefix) || '—'],
+    ['Factor crecimiento',  S.growth_factor + '×'],
+    ['Hardening L2',        S.hardening_l2 ? 'Habilitado (port-security + BPDU guard)' : 'Deshabilitado'],
+    [''],
+    ['Direccionamiento'],
+    ['Red base IPv4',       (S.net && S.net.address+'/'+S.net.prefix) || '—'],
     ['Total VLANs',         S.vlans.length],
     ['Hosts requeridos',    totalReq],
     ['Hosts útiles asignados', totalUsf],
     ['Eficiencia global',   efficiency + '%'],
-    [],
-    ['DUAL STACK / IPv6'],
+    [''],
+    ['IPv6 Dual-Stack'],
     ['Habilitado',          S.ipv6 ? 'Sí' : 'No'],
     ['Prefijo ULA',         S.ula_prefix || '—'],
-    [],
-    ['SERVICIOS'],
+    [''],
+    ['Servicios'],
     ['DNS IPv4',            S.dns4],
     ['DNS IPv6',            S.dns6],
     ['NTP',                 S.ntp],
-    [],
+    [''],
     ['WAN'],
     ['Next-hop',            S.wan_nexthop || '—'],
     ['Rutas estáticas',     (S.wan_routes || []).join(', ') || '—'],
   ];
   const wsSummary = XLSX.utils.aoa_to_sheet(summary);
-  /* Anchos de columna */
-  wsSummary['!cols'] = [{ wch: 32 }, { wch: 40 }];
-
-  /* Hoja 2: VLSM IPv4 */
-  const vlsmHead = ['VLAN ID', 'Nombre', 'Tipo', 'Piso', 'Hosts Req.', 'Hosts Útiles',
-                    'Eficiencia %', 'Red', 'Prefijo', 'Máscara', 'Gateway',
-                    'Broadcast', 'Primera IP', 'Última IP'];
-  const vlsmRows = S.vlans.map(v => [
-    v.id, v.name, v.type, v.floor_label, v.hosts_required, v.hosts_useful,
-    v.efficiency, v.network, '/' + v.prefix, v.mask, v.gateway_v4,
-    v.broadcast, v.first_host, v.last_host,
-  ]);
-  const wsVLSM4 = XLSX.utils.aoa_to_sheet([vlsmHead, ...vlsmRows]);
-  wsVLSM4['!cols'] = [
-    { wch: 8 }, { wch: 18 }, { wch: 10 }, { wch: 10 }, { wch: 11 }, { wch: 12 },
-    { wch: 13 }, { wch: 16 }, { wch: 8 }, { wch: 16 }, { wch: 16 },
-    { wch: 16 }, { wch: 16 }, { wch: 16 },
-  ];
-
-  /* Hoja 3: VLSM IPv6 (solo si está habilitado) */
-  let wsVLSM6 = null;
-  if (S.ipv6) {
-    const head6 = ['VLAN ID', 'Nombre', 'Subred IPv6', 'Gateway IPv6', 'Notas'];
-    const rows6 = S.vlans.map(v => [
-      v.id, v.name, v.subnet_v6 || '—', v.gateway_v6 || '—',
-      v.subnet_v6 ? '/64 Dual-Stack' : '',
-    ]);
-    wsVLSM6 = XLSX.utils.aoa_to_sheet([head6, ...rows6]);
-    wsVLSM6['!cols'] = [{ wch: 8 }, { wch: 18 }, { wch: 32 }, { wch: 32 }, { wch: 18 }];
+  wsSummary['!cols'] = [{ wch: 32 }, { wch: 50 }];
+  /* Título grande */
+  if (wsSummary['A1']) {
+    wsSummary['A1'].s = {
+      font: { bold: true, sz: 16, color: { rgb: 'FF1A6FC4' } },
+      alignment: { horizontal: 'left' },
+    };
   }
-
-  /* Hoja 4: Reservas IP */
-  const resHead = ['VLAN ID', 'VLAN Nombre', 'Alias', 'IPv4', 'IPv6', 'Stack'];
-  const resRows = [];
-  S.vlans.forEach(v => {
-    (v.reserved_ips || []).forEach(r => {
-      resRows.push([v.id, v.name, r.alias, r.ip4 || '—', r.ip6 || '—', r.stack.toUpperCase()]);
-    });
+  /* Subcabeceras */
+  ['A3','A8','A21','A28','A32','A37'].forEach(addr => {
+    if (wsSummary[addr]) {
+      wsSummary[addr].s = {
+        font: { bold: true, sz: 12, color: { rgb: 'FF0F4D8F' } },
+        fill: { fgColor: { rgb: 'FFE8F0FB' } },
+      };
+    }
   });
-  let wsRes = null;
-  if (resRows.length > 0) {
-    wsRes = XLSX.utils.aoa_to_sheet([resHead, ...resRows]);
-    wsRes['!cols'] = [{ wch: 8 }, { wch: 18 }, { wch: 22 }, { wch: 16 }, { wch: 32 }, { wch: 8 }];
+  wsSummary['!freeze'] = { xSplit: 0, ySplit: 1 };
+  XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumen');
+
+  /* ── Hoja 2: Inventario de dispositivos ── */
+  const inventory = [
+    ['Hostname', 'Rol', 'Piso', 'Vendor', 'Modelo sugerido', 'Puertos', 'Notas'],
+  ];
+  const vendorName = S.vendor === 'cisco' ? 'Cisco' : 'Huawei';
+  const coreModel  = S.vendor === 'cisco' ? 'Catalyst 9300 (L3)' : 'S5735-S-L (L3)';
+  const accModel   = S.vendor === 'cisco' ? 'Catalyst 2960X (L2)' : 'S2700 (L2)';
+  inventory.push([
+    'CORE-SW-01',
+    'Core Switch L3',
+    `Piso ${S.core_piso} (CPD)`,
+    vendorName,
+    coreModel,
+    `${S.puertos} + uplinks`,
+    `Hace SVI, DHCP, rutas. ${S.redundancia === 'dual' ? 'Uplinks LACP a FW.' : 'Uplink simple a FW.'}`,
+  ]);
+  for (let fl = 1; fl <= S.pisos; fl++) {
+    if (fl === S.core_piso) continue;
+    inventory.push([
+      `SW-ACC-P${fl}`,
+      'Access Switch L2',
+      `Piso ${fl}`,
+      vendorName,
+      accModel,
+      `${S.puertos}`,
+      S.hardening_l2 ? 'Port-security + BPDU guard activos' : 'Sin hardening L2',
+    ]);
+  }
+  inventory.push([
+    'FW-01',
+    'Firewall perimetral',
+    `Piso ${S.core_piso} (CPD)`,
+    'FortiGate (o vendor del Core)',
+    'FortiGate 100F (referencia)',
+    '4-8',
+    'NAT salida + políticas LAN→WAN',
+  ]);
+
+  const apsPerFloor = Math.ceil(S.hosts_piso / 30);
+  const totalAPs = apsPerFloor * S.pisos;
+  inventory.push([
+    `AP-WiFi (×${totalAPs})`,
+    'Access Points WiFi',
+    'Todos los pisos',
+    'Cisco/Huawei/Aruba',
+    'WiFi 6 (802.11ax)',
+    '—',
+    `${apsPerFloor} AP por piso (≈1 AP cada 30 usuarios)`,
+  ]);
+
+  const wsInv = XLSX.utils.aoa_to_sheet(inventory);
+  wsInv['!cols'] = [{wch:16},{wch:22},{wch:18},{wch:18},{wch:22},{wch:14},{wch:50}];
+  wsInv['!freeze'] = { xSplit: 0, ySplit: 1 };
+  wsInv['!autofilter'] = { ref: `A1:G${inventory.length}` };
+  styleHeader(wsInv, 0, 7);
+  XLSX.utils.book_append_sheet(wb, wsInv, 'Inventario');
+
+  /* ── Hoja 3: VLSM IPv4 ── */
+  const vlsmHead = ['VLAN ID', 'Nombre', 'Tipo', 'Piso', 'Hosts req.', 'Hosts útiles', 'Eficiencia', 'Red IPv4', 'Máscara', 'Gateway', 'Broadcast'];
+  const vlsmRows = S.vlans.map(v => [
+    v.id, v.name, v.type, v.floor_label,
+    v.hosts_required, v.hosts_useful, v.efficiency + '%',
+    v.network + '/' + v.prefix, v.mask, v.gateway_v4, v.broadcast,
+  ]);
+  const wsV4 = XLSX.utils.aoa_to_sheet([vlsmHead, ...vlsmRows]);
+  wsV4['!cols'] = [{wch:8},{wch:18},{wch:10},{wch:16},{wch:11},{wch:12},{wch:11},{wch:20},{wch:16},{wch:16},{wch:16}];
+  wsV4['!freeze'] = { xSplit: 0, ySplit: 1 };
+  wsV4['!autofilter'] = { ref: `A1:K${vlsmRows.length + 1}` };
+  styleHeader(wsV4, 0, vlsmHead.length);
+  XLSX.utils.book_append_sheet(wb, wsV4, 'VLSM IPv4');
+
+  /* ── Hoja 4: VLSM IPv6 ── */
+  if (S.ipv6) {
+    const v6Head = ['VLAN ID', 'Nombre', 'Subred IPv6 /64', 'Gateway IPv6'];
+    const v6Rows = S.vlans.map(v => [
+      v.id, v.name, v.subnet_v6 || '—', v.gateway_v6 || '—',
+    ]);
+    const wsV6 = XLSX.utils.aoa_to_sheet([v6Head, ...v6Rows]);
+    wsV6['!cols'] = [{wch:8},{wch:18},{wch:36},{wch:36}];
+    wsV6['!freeze'] = { xSplit: 0, ySplit: 1 };
+    wsV6['!autofilter'] = { ref: `A1:D${v6Rows.length + 1}` };
+    styleHeader(wsV6, 0, v6Head.length, 'FF7C3AED');
+    XLSX.utils.book_append_sheet(wb, wsV6, 'VLSM IPv6');
   }
 
-  /* Construir libro */
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumen');
-  XLSX.utils.book_append_sheet(wb, wsVLSM4,   'VLSM IPv4');
-  if (wsVLSM6) XLSX.utils.book_append_sheet(wb, wsVLSM6, 'VLSM IPv6');
-  if (wsRes)   XLSX.utils.book_append_sheet(wb, wsRes,   'Reservas IP');
+  /* ── Hoja 5: Reservas IP ── */
+  const reservations = [];
+  S.vlans.forEach(v => (v.reserved_ips || []).forEach(r => {
+    reservations.push([
+      v.id, v.name, r.alias,
+      r.ip4 || '—', r.ip6 || '—', (r.stack || '').toUpperCase(),
+    ]);
+  }));
+  const resHead = ['VLAN ID', 'VLAN Nombre', 'Alias / Hostname', 'IPv4', 'IPv6', 'Stack'];
+  const wsRes = XLSX.utils.aoa_to_sheet([resHead, ...reservations]);
+  wsRes['!cols'] = [{wch:8},{wch:18},{wch:24},{wch:16},{wch:36},{wch:10}];
+  wsRes['!freeze'] = { xSplit: 0, ySplit: 1 };
+  if (reservations.length > 0) {
+    wsRes['!autofilter'] = { ref: `A1:F${reservations.length + 1}` };
+  }
+  styleHeader(wsRes, 0, resHead.length, 'FF1A7A4A');
+  XLSX.utils.book_append_sheet(wb, wsRes, 'Reservas IP');
 
+  /* ── Hoja 6: Tabla de enrutamiento ── */
+  const routes = [
+    ['Tipo', 'Red destino', 'Máscara / Prefijo', 'Next-hop / Interfaz', 'Descripción'],
+  ];
+  /* Conectadas (SVIs) */
+  S.vlans.forEach(v => {
+    routes.push([
+      'Conectada (C)',
+      v.network,
+      `${v.mask} (/${v.prefix})`,
+      `SVI Vlan${v.id}`,
+      `${v.name} — ${v.floor_label}`,
+    ]);
+  });
+  /* Default */
+  routes.push([
+    'Estática (S*)',
+    '0.0.0.0',
+    '0.0.0.0 (/0)',
+    getFWip(),
+    'Default → Firewall FW-01',
+  ]);
+  /* WAN routes */
+  S.wan_routes.forEach(r => {
+    const p = parseCIDR(r);
+    if (!p) return;
+    routes.push([
+      'Estática (S)',
+      p.address,
+      `${prefixToMask(p.prefix)} (/${p.prefix})`,
+      S.wan_nexthop || '(next-hop)',
+      'Red remota WAN',
+    ]);
+  });
+  /* IPv6 default */
+  if (S.ipv6) {
+    routes.push([
+      'Estática IPv6 (S)',
+      '::',
+      '::/0',
+      getFWv6ip(),
+      'Default IPv6 → FW-01',
+    ]);
+  }
+  const wsRou = XLSX.utils.aoa_to_sheet(routes);
+  wsRou['!cols'] = [{wch:16},{wch:18},{wch:22},{wch:24},{wch:40}];
+  wsRou['!freeze'] = { xSplit: 0, ySplit: 1 };
+  wsRou['!autofilter'] = { ref: `A1:E${routes.length}` };
+  styleHeader(wsRou, 0, 5, 'FF875A00');
+  XLSX.utils.book_append_sheet(wb, wsRou, 'Enrutamiento');
+
+  /* ── Hoja 7: Servicios y WAN ── */
+  const services = [
+    ['Parámetro', 'Valor'],
+    ['Dominio interno', S.domain],
+    ['DNS primario IPv4', S.dns4],
+    ['DNS primario IPv6', S.dns6],
+    ['Servidor NTP', S.ntp],
+    ['IPv6 habilitado', S.ipv6 ? 'Sí' : 'No'],
+    ['Prefijo IPv6 ULA', S.ula_prefix || '—'],
+    [''],
+    ['WAN'],
+    ['Next-hop WAN', S.wan_nexthop || '(no configurado)'],
+    ['Rutas estáticas remotas', (S.wan_routes || []).length.toString()],
+    ...(S.wan_routes || []).map((r, i) => [`  Ruta ${i+1}`, r]),
+  ];
+  const wsSrv = XLSX.utils.aoa_to_sheet(services);
+  wsSrv['!cols'] = [{wch:28},{wch:40}];
+  wsSrv['!freeze'] = { xSplit: 0, ySplit: 1 };
+  styleHeader(wsSrv, 0, 2, 'FF0891B2');
+  if (wsSrv['A9']) {
+    wsSrv['A9'].s = {
+      font: { bold: true, sz: 11, color: { rgb: 'FF0F4D8F' } },
+      fill: { fgColor: { rgb: 'FFE8F0FB' } },
+    };
+  }
+  XLSX.utils.book_append_sheet(wb, wsSrv, 'Servicios');
+
+  /* Escribir y descargar */
   XLSX.writeFile(wb, _fileName('xlsx'));
   showToast('Excel exportado correctamente', 'success');
 }
 
+/* ── EXPORTACIÓN JSON ────────────────────────────────────────── */
 
-/* ── EXPORTACIÓN PDF ────────────────────────────────────────────
-   Usa jsPDF + jspdf-autotable desde CDN. Genera un documento de
-   2-3 páginas con resumen ejecutivo, tabla VLSM y reservas.
-   ─────────────────────────────────────────────────────────────── */
-
-async function exportPlanPDF() {
-  if (!S.vlans.length) {
-    showToast('Completa el plan antes de exportar', 'error');
-    return;
-  }
-  showToast('Cargando librería PDF…', 'success');
-
-  try {
-    await _loadScript('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js');
-    await _loadScript('https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js');
-  } catch (e) {
-    showToast('No se pudo cargar la librería. Verifica tu conexión.', 'error');
-    return;
-  }
-  const { jsPDF } = window.jspdf || {};
-  if (!jsPDF) { showToast('Error inicializando PDF', 'error'); return; }
-
-  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-  const W   = doc.internal.pageSize.getWidth();
-  const M   = 40;                                  // margen
-
-  /* ── Cabecera ── */
-  doc.setFillColor(26, 111, 196);                  // accent
-  doc.rect(0, 0, W, 70, 'F');
-  doc.setTextColor(255);
-  doc.setFont('helvetica', 'bold').setFontSize(20);
-  doc.text('NetPlan Pro v4.0', M, 38);
-  doc.setFont('helvetica', 'normal').setFontSize(11);
-  doc.text(`Plan de Red — ${S.domain}`, M, 56);
-
-  doc.setTextColor(120);
-  doc.setFontSize(9);
-  doc.text(new Date().toLocaleDateString('es-CO', { dateStyle: 'long' }), W - M, 56, { align: 'right' });
-
-  let y = 100;
-  doc.setTextColor(26, 35, 50);
-
-  /* ── Resumen ejecutivo ── */
-  const totalReq  = S.vlans.reduce((s,v) => s + v.hosts_required, 0);
-  const totalUsf  = S.vlans.reduce((s,v) => s + v.hosts_useful,   0);
-  const efficiency = Math.round((totalReq / totalUsf) * 100);
-  const swPiso    = Math.ceil(S.hosts_piso / S.puertos);
-
-  doc.setFont('helvetica', 'bold').setFontSize(13);
-  doc.text('Resumen ejecutivo', M, y);
-  y += 6;
-  doc.setDrawColor(26, 111, 196);
-  doc.setLineWidth(1.5);
-  doc.line(M, y, M + 130, y);
-  y += 18;
-
-  const summaryRows = [
-    ['Pisos / Core',        `${S.pisos} pisos · Core en piso ${S.core_piso}`],
-    ['Hosts por piso',      `${S.hosts_piso} hosts × ${S.puertos} puertos = ${swPiso} switch(es)`],
-    ['Redundancia',         S.redundancia === 'dual' ? 'Dual-Link LACP' : 'Single-Link'],
-    ['Vendor',              S.vendor === 'cisco' ? 'Cisco IOS/XE' : 'Huawei VRP'],
-    ['Red base IPv4',       (S.net && S.net.address+'/'+S.net.prefix) || '—'],
-    ['VLANs / Hosts',       `${S.vlans.length} VLANs · ${totalReq} requeridos · ${totalUsf} útiles`],
-    ['Eficiencia VLSM',     `${efficiency}%`],
-    ['Dual Stack',          S.ipv6 ? `Sí — ULA: ${S.ula_prefix}` : 'No'],
-    ['Servicios',           `DNS: ${S.dns4} · NTP: ${S.ntp}`],
-    ['WAN',                 S.wan_nexthop ? `Next-hop ${S.wan_nexthop}` : '—'],
-  ];
-  doc.autoTable({
-    startY: y,
-    body:   summaryRows,
-    theme:  'plain',
-    styles: { fontSize: 9.5, cellPadding: 4 },
-    columnStyles: {
-      0: { fontStyle: 'bold', cellWidth: 130, textColor: [113, 128, 150] },
-      1: { textColor: [26, 35, 50] },
-    },
-    margin: { left: M, right: M },
-  });
-  y = doc.lastAutoTable.finalY + 24;
-
-  /* ── Tabla VLSM ── */
-  if (y > 720) { doc.addPage(); y = 50; }
-  doc.setFont('helvetica', 'bold').setFontSize(13);
-  doc.text('Tabla VLSM IPv4', M, y);
-  y += 6; doc.line(M, y, M + 130, y); y += 12;
-
-  doc.autoTable({
-    startY: y,
-    head: [['VLAN', 'Nombre', 'Piso', 'Red', 'Máscara', 'Gateway', 'Broadcast', 'Útiles', 'Ef.%']],
-    body: S.vlans.map(v => [
-      v.id, v.name, v.floor_label,
-      v.network + '/' + v.prefix, v.mask, v.gateway_v4,
-      v.broadcast, v.hosts_useful, v.efficiency + '%',
-    ]),
-    theme: 'striped',
-    styles: { fontSize: 8, cellPadding: 3 },
-    headStyles: {
-      fillColor: [26, 111, 196], textColor: 255,
-      fontStyle: 'bold', fontSize: 8.5,
-    },
-    alternateRowStyles: { fillColor: [247, 249, 251] },
-    margin: { left: M, right: M },
-  });
-  y = doc.lastAutoTable.finalY + 24;
-
-  /* ── Tabla VLSM IPv6 (si aplica) ── */
-  if (S.ipv6) {
-    if (y > 700) { doc.addPage(); y = 50; }
-    doc.setFont('helvetica', 'bold').setFontSize(13);
-    doc.text('Tabla VLSM IPv6 (Dual Stack)', M, y);
-    y += 6; doc.line(M, y, M + 200, y); y += 12;
-    doc.autoTable({
-      startY: y,
-      head: [['VLAN', 'Nombre', 'Subred IPv6', 'Gateway IPv6']],
-      body: S.vlans.map(v => [v.id, v.name, v.subnet_v6 || '—', v.gateway_v6 || '—']),
-      theme: 'striped',
-      styles: { fontSize: 8, cellPadding: 3, font: 'courier' },
-      headStyles: { fillColor: [124, 58, 237], textColor: 255, font: 'helvetica', fontStyle: 'bold' },
-      alternateRowStyles: { fillColor: [247, 249, 251] },
-      margin: { left: M, right: M },
-    });
-    y = doc.lastAutoTable.finalY + 24;
-  }
-
-  /* ── Reservas IP ── */
-  const reservations = [];
-  S.vlans.forEach(v => (v.reserved_ips || []).forEach(r => {
-    reservations.push([
-      `VLAN ${v.id} — ${v.name}`, r.alias,
-      r.ip4 || '—', r.ip6 || '—', r.stack.toUpperCase(),
-    ]);
-  }));
-
-  if (reservations.length > 0) {
-    if (y > 680) { doc.addPage(); y = 50; }
-    doc.setFont('helvetica', 'bold').setFontSize(13);
-    doc.text('IPs de reserva', M, y);
-    y += 6; doc.line(M, y, M + 130, y); y += 12;
-    doc.autoTable({
-      startY: y,
-      head: [['VLAN', 'Alias', 'IPv4', 'IPv6', 'Stack']],
-      body: reservations,
-      theme: 'striped',
-      styles: { fontSize: 8, cellPadding: 3 },
-      headStyles: { fillColor: [26, 122, 74], textColor: 255, fontStyle: 'bold' },
-      alternateRowStyles: { fillColor: [247, 249, 251] },
-      margin: { left: M, right: M },
-    });
-  }
-
-  /* ── Pie de página en cada página ── */
-  const pageCount = doc.getNumberOfPages();
-  for (let p = 1; p <= pageCount; p++) {
-    doc.setPage(p);
-    doc.setFont('helvetica', 'normal').setFontSize(8);
-    doc.setTextColor(140);
-    doc.text(`NetPlan Pro v4.0  ·  ${S.domain}`, M, 825);
-    doc.text(`Página ${p} / ${pageCount}`, W - M, 825, { align: 'right' });
-  }
-
-  doc.save(_fileName('pdf'));
-  showToast('PDF exportado correctamente', 'success');
-}
-
-
-/* ── EXPORTACIÓN MERMAID Y DRAWIO ────────────────────────────── */
-
-function exportPlanMermaid() {
+function exportPlanJSON() {
   if (!S.vlans.length) { showToast('Completa el plan antes de exportar', 'error'); return; }
-  const mmd = generateMermaid();
-  _download(new Blob([mmd], { type: 'text/plain' }), _fileName('mmd'));
-  showToast('Mermaid exportado — péguelo en GitHub o Notion', 'success');
+  const json = JSON.stringify(buildPlanJSON(), null, 2);
+  _download(new Blob([json], { type: 'application/json' }), _fileName('json'));
+  showToast('JSON exportado correctamente', 'success');
 }
+
+/* ── EXPORTACIÓN DRAWIO ──────────────────────────────────────── */
 
 function exportPlanDrawio() {
   if (!S.vlans.length) { showToast('Completa el plan antes de exportar', 'error'); return; }
   const xml = generateDrawioXML();
   _download(new Blob([xml], { type: 'application/xml' }), _fileName('drawio'));
-  showToast('Drawio exportado — abrirlo en https://app.diagrams.net', 'success');
-}
-
-
-/* ── EXPORTAR PLAN COMPLETO ──────────────────────────────────────
-   Un único HTML autocontenido con:
-     · Métricas + Tabla VLSM
-     · IPs de reserva por VLAN
-     · Topología SVG
-     · Configs Cisco / Huawei / FortiGate
-     · Borrado seguro por vendor
-   ─────────────────────────────────────────────────────────────── */
-
-/**
- * Construye y descarga el HTML completo del plan.
- * Un solo archivo — sin dependencias externas — listo para imprimir.
- */
-function downloadPlan() {
-  if (!S.vlans.length) { showToast('Completa el plan antes de exportar', 'error'); return; }
-
-  const now = new Date().toLocaleDateString('es-CO', {year:'numeric',month:'long',day:'numeric'});
-
-  /* ── Métricas globales ── */
-  const totalReq  = S.vlans.reduce((s,v) => s + v.hosts_required, 0);
-  const totalUsf  = S.vlans.reduce((s,v) => s + v.hosts_useful,   0);
-  const globalEff = Math.round((totalReq / totalUsf) * 100);
-  const swPiso    = Math.ceil(S.hosts_piso / S.puertos);
-
-  /* ── Tabla VLSM ── */
-  const vlsmRows = S.vlans.map(v => `
-    <tr>
-      <td>${v.id}</td><td><strong>${escHtml(v.name)}</strong></td>
-      <td>${v.floor_label}</td>
-      <td>${v.network}/${v.prefix}</td><td>${v.mask}</td>
-      <td>${v.gateway_v4}</td><td>${v.broadcast}</td>
-      <td>${v.hosts_useful}</td><td>${v.efficiency}%</td>
-      <td>${S.ipv6&&v.subnet_v6?v.subnet_v6:'—'}</td>
-      <td>${S.ipv6&&v.gateway_v6?v.gateway_v6:'—'}</td>
-    </tr>`).join('');
-
-  /* ── IPs de reserva ── */
-  const reserveRows = S.vlans.filter(v=>(v.reserved_ips||[]).length>0).map(v =>
-    (v.reserved_ips||[]).map(r => `
-    <tr>
-      <td>VLAN ${v.id} — ${escHtml(v.name)}</td>
-      <td><strong>${escHtml(r.alias)}</strong></td>
-      <td>${r.ip4||'—'}</td><td>${r.ip6||'—'}</td>
-      <td><span class="pill pill-${r.stack}">${r.stack.toUpperCase()}</span></td>
-    </tr>`).join('')
-  ).join('');
-
-  /* ── Tabla de enrutamiento ── */
-  const fwIP = getFWip();
-  const routeRows = [
-    ...S.vlans.map(v => `<tr><td>${v.network}/${v.prefix}</td><td>${v.mask}</td>
-      <td>Conectada (SVI Vlan${v.id})</td><td>${v.gateway_v4}</td><td>${escHtml(v.name)}</td></tr>`),
-    `<tr><td>0.0.0.0/0</td><td>0.0.0.0</td><td>Estática (default)</td><td>${fwIP}</td><td>Salida Internet</td></tr>`,
-    ...S.wan_routes.map(r => { const p=parseCIDR(r); return p ?
-      `<tr><td>${p.address}/${p.prefix}</td><td>${prefixToMask(p.prefix)}</td>
-       <td>Estática (WAN remota)</td><td>${S.wan_nexthop}</td><td>Red remota</td></tr>` : '';})
-  ].join('');
-
-  /* ── Topología SVG ── */
-  const svgTopo = generateTopologySVG();
-
-  /* ── Configs + Rollback por vendor ── */
-  const vendors = [
-    { key:'cisco',    label:'Cisco IOS/XE',    cfg: generateCiscoConfig(),    rb: generateRollbackCisco()   },
-    { key:'huawei',   label:'Huawei VRP',       cfg: generateHuaweiConfig(),   rb: generateRollbackHuawei()  },
-    { key:'fortinet', label:'FortiGate (FW)',   cfg: generateFortinetConfig(), rb: generateRollbackFortinet()},
-  ];
-
-  const vendorTabs = vendors.map((v,i) =>
-    `<button class="vtab${i===0?' active':''}" onclick="showVtab('${v.key}',this)">${v.label}</button>`
-  ).join('');
-
-  const vendorPanels = vendors.map((v,i) => `
-    <div class="vpanel${i===0?'':' hidden'}" id="vp-${v.key}">
-      <h3 style="font-size:13px;font-weight:700;text-transform:uppercase;color:#4a5568;margin-bottom:10px;">${v.label}</h3>
-      <h4 style="font-size:11px;color:#1a6fc4;margin-bottom:6px;">Configuración</h4>
-      <pre class="cfg">${escHtml(v.cfg)}</pre>
-      <h4 style="font-size:11px;color:#b91c1c;margin:14px 0 6px;">Borrado Seguro (Rollback)</h4>
-      <pre class="cfg rb">${escHtml(v.rb)}</pre>
-    </div>`).join('');
-
-  const html = `<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8"/>
-<title>NetPlan Pro — ${escHtml(S.domain)}</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#1a2332;background:#fff;padding:32px}
-header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #1a6fc4;padding-bottom:12px;margin-bottom:24px}
-.brand{font-size:22px;font-weight:700;letter-spacing:.08em}.brand span{color:#1a6fc4}
-.meta{font-size:11px;color:#718096;text-align:right;line-height:1.8}
-h2{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#4a5568;margin:24px 0 12px;padding-bottom:6px;border-bottom:1px solid #e2e8f0}
-.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
-.mc{background:#f0f4f8;border:1px solid #d1dae6;border-radius:8px;padding:14px}
-.mc .val{font-size:26px;font-weight:700;color:#1a6fc4;line-height:1.1}
-.mc .lbl{font-size:10px;color:#718096;margin-top:3px}
-table{width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:4px}
-thead tr{background:#f0f4f8}
-th{text-align:left;padding:7px 10px;font-size:10px;font-weight:700;text-transform:uppercase;color:#718096;border-bottom:2px solid #d1dae6;white-space:nowrap}
-td{padding:7px 10px;border-bottom:1px solid #e2e8f0;font-family:'Courier New',monospace;color:#4a5568;white-space:nowrap}
-td strong{font-family:'Segoe UI',Arial,sans-serif;font-weight:600;color:#1a2332}
-tr:hover td{background:#f7f9fb}
-.pill{font-size:9px;padding:2px 7px;border-radius:20px;font-weight:700}
-.pill-ipv4{background:#e8f0fb;color:#1a6fc4;border:1px solid #c2d7f0}
-.pill-ipv6{background:#f0fdf4;color:#15803d;border:1px solid #86efac}
-.pill-dual{background:#fdf4ff;color:#7c3aed;border:1px solid #d8b4fe}
-.topo-wrap{background:#f8fafc;border:1px solid #d1dae6;border-radius:10px;padding:16px;margin-bottom:8px;overflow-x:auto}
-.vtabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
-.vtab{padding:7px 16px;background:#f0f4f8;border:1px solid #d1dae6;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer}
-.vtab.active{background:#e8f0fb;border-color:#1a6fc4;color:#1a6fc4}
-.vpanel.hidden{display:none}
-.cfg{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:14px;font-family:'Courier New',monospace;font-size:11px;color:#334155;white-space:pre;overflow-x:auto;max-height:400px;overflow-y:auto;line-height:1.7}
-.cfg.rb{border-color:#fca5a5;background:#fff8f8;color:#7f1d1d}
-footer{margin-top:28px;font-size:11px;color:#a0aec0;text-align:center;border-top:1px solid #e2e8f0;padding-top:12px}
-@media print{.vtab,.vtabs{display:none}.vpanel.hidden{display:block}.cfg{max-height:none}}
-</style>
-</head>
-<body>
-<header>
-  <div class="brand">NET<span>PLAN</span> <small style="font-size:13px;font-weight:400;color:#718096">Pro v4.0</small></div>
-  <div class="meta">Dominio: <strong>${escHtml(S.domain)}</strong><br>
-    Red base: <strong>${S.net?S.net.address+'/'+S.net.prefix:'—'}</strong><br>
-    Factor crecimiento: <strong>${S.growth_factor}×</strong> · Generado: ${now}</div>
-</header>
-
-<h2>Métricas globales</h2>
-<div class="metrics">
-  <div class="mc"><div class="val">${globalEff}%</div><div class="lbl">Eficiencia IPv4</div></div>
-  <div class="mc"><div class="val">${S.vlans.length}</div><div class="lbl">VLANs generadas</div></div>
-  <div class="mc"><div class="val">${(S.hosts_piso*S.pisos).toLocaleString()}</div><div class="lbl">Hosts totales</div></div>
-  <div class="mc"><div class="val">${swPiso}</div><div class="lbl">Switches / piso</div></div>
-</div>
-
-<h2>Tabla VLSM — Direccionamiento IPv4${S.ipv6?' e IPv6':''}</h2>
-<div style="overflow-x:auto"><table>
-  <thead><tr><th>VLAN</th><th>Nombre</th><th>Piso</th><th>Red IPv4</th><th>Máscara</th>
-    <th>Gateway IPv4</th><th>Broadcast</th><th>Hosts útiles</th><th>Efic.</th>
-    <th>Subred IPv6</th><th>GW IPv6</th></tr></thead>
-  <tbody>${vlsmRows}</tbody>
-</table></div>
-
-${reserveRows ? `<h2>IPs de Reserva (Dual Stack)</h2>
-<div style="overflow-x:auto"><table>
-  <thead><tr><th>VLAN</th><th>Alias / Hostname</th><th>IPv4</th><th>IPv6</th><th>Stack</th></tr></thead>
-  <tbody>${reserveRows}</tbody>
-</table></div>` : ''}
-
-<h2>Tabla de Enrutamiento</h2>
-<div style="overflow-x:auto"><table>
-  <thead><tr><th>Red destino</th><th>Máscara</th><th>Tipo</th><th>Next-Hop / Interfaz</th><th>Descripción</th></tr></thead>
-  <tbody>${routeRows}</tbody>
-</table></div>
-<p style="font-size:11px;color:#718096;margin-top:6px">* El enrutamiento inter-VLAN se realiza mediante SVIs en el Core Switch L3 (rutas directamente conectadas). Las rutas estáticas solo aplican para tráfico externo o redes remotas.</p>
-
-<h2>Topología Lógica</h2>
-<div class="topo-wrap">${svgTopo}</div>
-
-<h2>Configuraciones de dispositivos</h2>
-<div class="vtabs">${vendorTabs}</div>
-${vendorPanels}
-
-<footer>NetPlan Pro v4.0 · Fundación Universitaria Compensar · Documento generado automáticamente</footer>
-<script>
-function showVtab(key,btn){
-  document.querySelectorAll('.vtab').forEach(b=>b.classList.remove('active'));
-  document.querySelectorAll('.vpanel').forEach(p=>p.classList.add('hidden'));
-  btn.classList.add('active');
-  document.getElementById('vp-'+key).classList.remove('hidden');
-}
-</script>
-</body></html>`;
-
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([html], {type:'text/html;charset=utf-8'}));
-  a.download = `netplan_${S.domain}_${new Date().toISOString().slice(0,10)}.html`;
-  a.click();
-  URL.revokeObjectURL(a.href);
-  showToast('Plan exportado correctamente', 'success');
+  showToast('Drawio exportado — ábrelo en https://app.diagrams.net', 'success');
 }
 
 
@@ -2996,15 +2803,12 @@ function showVtab(key,btn){
    15. NAVEGACIÓN DEL WIZARD
    ══════════════════════════════════════════════════════════════ */
 
-/** Navega a un paso haciendo clic en la barra (solo si el actual es válido). */
 function goToStep(n) {
   if (n > S.step && !validateStep(S.step)) return;
   activateStep(n);
 }
 
-/** Avanza (+1) o retrocede (-1) un paso. */
 function changeStep(dir) {
-  /* En el último paso, "Finalizar" abre el modal antes de cualquier guard */
   if (S.step === 5 && dir > 0) { openFinishModal(); return; }
   const next = S.step + dir;
   if (next < 0 || next > 5) return;
@@ -3012,10 +2816,6 @@ function changeStep(dir) {
   activateStep(next);
 }
 
-/**
- * Activa un paso: muestra la sección, actualiza tabs, ejecuta
- * la lógica de entrada del paso (onStepEnter).
- */
 function activateStep(n) {
   document.querySelectorAll('.step-content').forEach((el, i) =>
     el.classList.toggle('active', i === n)
@@ -3035,14 +2835,12 @@ function activateStep(n) {
   const btnNext = document.getElementById('btn-next');
   if (btnNext) {
     btnNext.textContent = n === 5 ? 'Finalizar' : 'Siguiente →';
-    /* Pasos 3-5 siempre habilitados; 0-2 según validación */
     btnNext.disabled = n >= 3 ? false : !validateStep(n);
   }
 
   onStepEnter(n);
 }
 
-/** Ejecuta la lógica específica al entrar a cada paso. */
 function onStepEnter(n) {
   if (n === 0) validateStep(0);
   if (n === 1) { runAnalysis();       validateStep(1); }
@@ -3054,25 +2852,18 @@ function onStepEnter(n) {
 
 
 /* ══════════════════════════════════════════════════════════════
-   16. PANEL LATERAL, TOAST Y MODAL
+   16. PANEL LATERAL, TOAST Y MODAL DE FINALIZAR (v4.6 — 3 opciones)
    ══════════════════════════════════════════════════════════════ */
 
-/** Establece el texto de un elemento por ID. */
 function setText(id, text) {
   const el = document.getElementById(id);
   if (el) el.textContent = text;
 }
 
-/** Añade/quita una clase CSS de un elemento por ID. */
 function toggleClass(id, cls, condition) {
   document.getElementById(id)?.classList.toggle(cls, condition);
 }
 
-/**
- * Muestra el toast de notificaciones durante 2.5 segundos.
- * @param {string} message - Texto a mostrar
- * @param {string} type    - 'success' | 'error'
- */
 function showToast(message, type = 'success') {
   const toast = document.getElementById('toast');
   if (!toast) return;
@@ -3091,80 +2882,120 @@ function closeModal() {
 }
 
 /**
- * Resetea toda la aplicación al estado inicial.
- * Limpia el estado S, los formularios, los contenedores
- * generados y vuelve al paso 1.
+ * NUEVO v4.6 — Guardar el plan actual sin reiniciar.
+ * Si hay Firebase + sesión, guarda en la nube; si no, descarga JSON.
  */
-function resetApp() {
+async function finishSaveAndStay() {
   closeModal();
 
-  /* Resetear estado */
-  Object.assign(S, {
-    pisos: 3, core_piso: 1, hosts_piso: null, puertos: 48,
-    redundancia: 'single', vendor: 'cisco', growth_factor: 2,
-    net: null, override: '',
-    dns4: '8.8.8.8', dns6: '2001:4860:4860::8888',
-    ntp: 'pool.ntp.org', domain: 'corp.local', ipv6: true,
-    wan_nexthop: '', wan_routes: [],
-    vlan_defs: [], vlans: [], ula_prefix: '',
-    step: 0, export_vendor: 'cisco', rollback_vendor: 'cisco',
-    vlan_edit_id: null, reserve_expanded: {},
-    cloud_plan_id: null,
-  });
+  /* Caso 1: Firebase disponible → guardar en la nube */
+  if (window.NetPlanCloud?.isAvailable()) {
+    try {
+      const name = S.domain || 'Plan sin título';
+      const planJson = buildPlanJSON();
+      const id = await window.NetPlanCloud.savePlan(planJson, name, S.cloud_plan_id);
+      S.cloud_plan_id = id;
+      showToast(`Plan "${name}" guardado en la nube`, 'success');
+      return;
+    } catch (e) {
+      showToast('Error al guardar en nube: ' + e.message + '. Descargando JSON…', 'error');
+    }
+  }
 
-  /* Resetear selects e inputs numéricos del paso 1 */
-  document.getElementById('inp-pisos').value   = '3';
-  document.getElementById('inp-core').value    = '1';
-  document.getElementById('inp-core').max      = '3';
-  const hintCore = document.getElementById('hint-core');
-  if (hintCore) hintCore.textContent = 'Rango: 1 – 3 (debe ser ≤ número de pisos)';
-  const errCore = document.getElementById('error-core');
-  if (errCore)  errCore.textContent  = 'Debe estar entre 1 y 3';
-  document.getElementById('sel-puertos').value = '48';
-  const selGrowth = document.getElementById('sel-growth');
-  if (selGrowth) selGrowth.value = '2';
+  /* Caso 2: sin nube → descargar JSON */
+  exportPlanJSON();
+}
 
-  /* Limpiar inputs de texto */
-  document.getElementById('inp-hosts').value   = '';
-  document.getElementById('inp-override').value = '';
-  const wn = document.getElementById('inp-wan-nexthop'); if (wn) wn.value = '';
-  const wr = document.getElementById('inp-wan-routes');   if (wr) wr.value = '';
-  document.getElementById('inp-dns4').value    = '8.8.8.8';
-  document.getElementById('inp-dns6').value    = '2001:4860:4860::8888';
-  document.getElementById('inp-ntp').value     = 'pool.ntp.org';
-  document.getElementById('inp-domain').value  = 'corp.local';
+/**
+ * NUEVO v4.6 — Guardar y luego iniciar plan nuevo.
+ */
+async function finishSaveAndNew() {
+  await finishSaveAndStay();
+  /* Pequeño delay para que se vea el toast antes del reset */
+  setTimeout(() => resetApp(), 800);
+}
 
-  /* Resetear checkbox IPv6 */
-  const ipv6cb = document.getElementById('chk-ipv6');
-  if (ipv6cb) ipv6cb.checked = true;
-  document.getElementById('ipv6-info')?.classList.remove('hidden');
-
-  /* Limpiar estados de validación */
-  document.querySelectorAll('.field.invalid').forEach(f => f.classList.remove('invalid'));
-
-  /* Resetear toggles */
-  document.querySelectorAll('#tg-redund .toggle-btn').forEach((b, i) =>
-    b.classList.toggle('active', i === 0)
+/**
+ * NUEVO v4.6 — Descartar sin guardar (con segundo confirm).
+ */
+function finishDiscardAndNew() {
+  const ok = confirm(
+    'Vas a iniciar un plan nuevo SIN guardar el actual.\n\n' +
+    'Esta acción no se puede deshacer. ¿Continuar?'
   );
-  document.querySelectorAll('#tg-vendor .vendor-btn').forEach((b, i) =>
-    b.classList.toggle('active', i === 0)
+  if (!ok) return;
+  closeModal();
+  resetApp();
+}
+
+/**
+ * Resetea toda la aplicación al estado inicial.
+ */
+function resetApp() {
+  S.pisos       = 3;
+  S.core_piso   = 1;
+  S.hosts_piso  = null;
+  S.puertos     = 48;
+  S.redundancia = 'single';
+  S.vendor      = 'cisco';
+  S.growth_factor = 2;
+  S.hardening_l2 = true;
+  S.net         = null;
+  S.override    = '';
+  S.dns4        = '8.8.8.8';
+  S.dns6        = '2001:4860:4860::8888';
+  S.ntp         = 'pool.ntp.org';
+  S.domain      = 'corp.local';
+  S.ipv6        = true;
+  S.wan_nexthop = '';
+  S.wan_routes  = [];
+  S.vlan_defs   = [];
+  S.vlans       = [];
+  S.ula_prefix  = '';
+  S.export_vendor   = 'cisco';
+  S.rollback_vendor = 'cisco';
+  S.vlan_edit_id    = null;
+  S.reserve_expanded = {};
+  S.cloud_plan_id   = null;
+
+  closeModal();
+
+  /* Resetear inputs UI */
+  const inpPisos = document.getElementById('inp-pisos');     if (inpPisos) inpPisos.value = '3';
+  const inpCore  = document.getElementById('inp-core');      if (inpCore)  inpCore.value  = '1';
+  const inpHosts = document.getElementById('inp-hosts');     if (inpHosts) inpHosts.value = '';
+  const selPuertos = document.getElementById('sel-puertos'); if (selPuertos) selPuertos.value = '48';
+  const selGrowth  = document.getElementById('sel-growth');  if (selGrowth)  selGrowth.value = '2';
+  const inpOverride = document.getElementById('inp-override'); if (inpOverride) inpOverride.value = '';
+  const inpDns4   = document.getElementById('inp-dns4');     if (inpDns4)   inpDns4.value   = '8.8.8.8';
+  const inpDns6   = document.getElementById('inp-dns6');     if (inpDns6)   inpDns6.value   = '2001:4860:4860::8888';
+  const inpNtp    = document.getElementById('inp-ntp');      if (inpNtp)    inpNtp.value    = 'pool.ntp.org';
+  const inpDomain = document.getElementById('inp-domain');   if (inpDomain) inpDomain.value = 'corp.local';
+  const inpWanNh  = document.getElementById('inp-wan-nexthop'); if (inpWanNh) inpWanNh.value = '';
+  const inpWanRt  = document.getElementById('inp-wan-routes');  if (inpWanRt) inpWanRt.value = '';
+  const cbIpv6    = document.getElementById('chk-ipv6');     if (cbIpv6)    cbIpv6.checked = true;
+  const cbHard    = document.getElementById('chk-hardening');if (cbHard)    cbHard.checked = true;
+
+  /* Toggle groups: marcar default */
+  document.querySelectorAll('#tg-redund .toggle-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.value === 'single')
+  );
+  document.querySelectorAll('#tg-vendor .vendor-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.value === 'cisco')
   );
 
-  /* Resetear tabs de exportación */
-  document.querySelectorAll('.export-tab').forEach((t, i) =>
-    t.classList.toggle('active', i === 0)
-  );
-
-  /* Limpiar contenedores generados */
+  /* Limpiar contenedores */
   const vc = document.getElementById('vlans-container');
   if (vc) vc.innerHTML = '<p class="placeholder-msg">Completa los pasos anteriores para generar las VLANs</p>';
   const tb = document.getElementById('vlsm-tbody');
   if (tb) tb.innerHTML = '';
-  const ec = document.getElementById('export-code');
-  if (ec) ec.textContent = 'Selecciona un vendor para ver la configuración generada';
+  const ec = document.getElementById('export-blocks');
+  if (ec) ec.innerHTML = '<p class="placeholder-msg">Selecciona un vendor para ver las configuraciones</p>';
+  const tp = document.getElementById('topo-preview');
+  if (tp) tp.innerHTML = '<p class="placeholder-msg" style="padding:24px 0">La topología se genera al calcular el plan</p>';
 
-  /* Cerrar formulario VLAN si estaba abierto */
   document.getElementById('vlan-form')?.classList.add('hidden');
+  document.getElementById('export-zip-bar')?.classList.add('hidden');
 
   /* Resetear panel lateral */
   ['st-network','st-hosts','st-vlans','st-prefix','st-blocks',
@@ -3176,12 +3007,10 @@ function resetApp() {
   setText('sw-detail', 'Ingresa los hosts por piso para ver el cálculo');
   setText('vlans-count', '0 VLANs');
 
-  /* Resetear info-box */
   const swBox = document.getElementById('sw-result');
   if (swBox) { swBox.classList.add('ok'); swBox.classList.remove('warn'); }
 
   activateStep(0);
-  /* Limpiar autoguardado al reiniciar el plan */
   try { localStorage.removeItem(STORAGE_KEY); } catch(e) {}
   document.getElementById('recovery-banner')?.classList.add('hidden');
   showToast('Plan reiniciado. Comienza desde el paso 1.', 'success');
@@ -3190,25 +3019,14 @@ function resetApp() {
 
 /* ══════════════════════════════════════════════════════════════
    17. PERSISTENCIA — JSON, IMPORT/EXPORT, AUTOGUARDADO
-   ══════════════════════════════════════════════════════════════
-   Diseño:
-   ─ El JSON solo guarda decisiones del usuario (no valores derivados
-     como network/mask/gateway). Estos se recalculan al cargar.
-   ─ El esquema lleva versión: futuras migraciones via migratePlan().
-   ─ La misma estructura sirve para localStorage y para Firebase
-     más adelante: una sola fuente de verdad.
    ══════════════════════════════════════════════════════════════ */
 
 const PLAN_SCHEMA_VERSION = 'netplan.v1';
 const STORAGE_KEY         = 'netplan_pro_autosave';
-const AUTOSAVE_DEBOUNCE   = 800;       // ms — evita saturar localStorage
+const AUTOSAVE_DEBOUNCE   = 800;
 
 let _autosaveTimer = null;
 
-/**
- * Construye el objeto JSON serializable del plan actual.
- * Solo incluye lo que el usuario decidió; lo derivado se recalcula.
- */
 function buildPlanJSON() {
   const now = new Date().toISOString();
   return {
@@ -3228,6 +3046,7 @@ function buildPlanJSON() {
       redundancia:   S.redundancia,
       vendor:        S.vendor,
       growth_factor: S.growth_factor,
+      hardening_l2:  S.hardening_l2,
     },
     ipv4: {
       override: S.override || '',
@@ -3259,13 +3078,6 @@ function buildPlanJSON() {
   };
 }
 
-/**
- * Valida y migra un objeto plan recibido (JSON parseado).
- * Devuelve { ok: bool, plan?: object, error?: string }.
- *
- * Reglas de validación: idénticas a las del UI (rango pisos 1-50,
- * core ≤ pisos, hosts 1-500, etc.). Mensajes en español, claros.
- */
 function validateAndMigratePlan(data) {
   if (!data || typeof data !== 'object') {
     return { ok: false, error: 'JSON malformado o vacío' };
@@ -3274,149 +3086,79 @@ function validateAndMigratePlan(data) {
     return { ok: false, error: 'Falta el campo "schema" — ¿es un plan NetPlan?' };
   }
 
-  /* Migración (placeholder para futuras versiones) */
   if (data.schema !== PLAN_SCHEMA_VERSION) {
     return { ok: false, error: `Versión "${data.schema}" no soportada. Esperado: ${PLAN_SCHEMA_VERSION}` };
   }
 
-  /* Secciones requeridas */
-  for (const k of ['infrastructure', 'services', 'vlans']) {
-    if (!data[k]) return { ok: false, error: `Falta sección obligatoria "${k}"` };
+  const inf = data.infrastructure || {};
+  if (!inf.pisos || inf.pisos < 1 || inf.pisos > 50) {
+    return { ok: false, error: 'pisos debe estar entre 1 y 50' };
   }
-
-  /* infrastructure */
-  const i = data.infrastructure;
-  if (!Number.isInteger(i.pisos) || i.pisos < 1 || i.pisos > 50)
-    return { ok: false, error: 'Pisos debe ser entero entre 1 y 50' };
-  if (!Number.isInteger(i.core_piso) || i.core_piso < 1 || i.core_piso > i.pisos)
-    return { ok: false, error: `Piso del core debe ser entero entre 1 y ${i.pisos}` };
-  if (!Number.isInteger(i.hosts_piso) || i.hosts_piso < 1 || i.hosts_piso > 500)
-    return { ok: false, error: 'Hosts por piso debe ser entero entre 1 y 500' };
-  if (![24, 48].includes(i.puertos))
-    return { ok: false, error: 'Puertos por switch debe ser 24 o 48' };
-  if (!['single', 'dual'].includes(i.redundancia))
-    return { ok: false, error: 'Redundancia debe ser "single" o "dual"' };
-  if (!['cisco', 'huawei'].includes(i.vendor))
-    return { ok: false, error: 'Vendor debe ser "cisco" o "huawei"' };
-  if (![1.5, 2, 3].includes(i.growth_factor))
-    return { ok: false, error: 'Factor de crecimiento debe ser 1.5, 2 o 3' };
-
-  /* services */
-  const s = data.services;
-  if (!isValidIPv4(s.dns4 || ''))            return { ok: false, error: 'DNS IPv4 inválido' };
-  if (!isValidIPv6(s.dns6 || ''))            return { ok: false, error: 'DNS IPv6 inválido' };
-  if (!isValidIPv4orHostname(s.ntp || ''))   return { ok: false, error: 'NTP inválido (IPv4 u hostname)' };
-  if (!isValidDomain(s.domain || ''))        return { ok: false, error: 'Dominio interno inválido' };
-  if (typeof s.ipv6 !== 'boolean')           return { ok: false, error: 'Campo services.ipv6 debe ser booleano' };
-  if (s.wan_nexthop && !isValidIPv4(s.wan_nexthop))
-    return { ok: false, error: 'WAN next-hop inválido' };
-  if (!Array.isArray(s.wan_routes))          return { ok: false, error: 'wan_routes debe ser array' };
-  for (const r of s.wan_routes) {
-    if (!parseCIDR(r)) return { ok: false, error: `Ruta WAN inválida: "${r}"` };
+  if (!inf.core_piso || inf.core_piso < 1 || inf.core_piso > inf.pisos) {
+    return { ok: false, error: `core_piso debe estar entre 1 y ${inf.pisos}` };
   }
-
-  /* ipv4.override (opcional) */
-  const ov = data.ipv4?.override || '';
-  if (ov && !parseCIDR(ov)) return { ok: false, error: `Override CIDR inválido: "${ov}"` };
-
-  /* vlans */
-  if (!Array.isArray(data.vlans) || data.vlans.length === 0)
-    return { ok: false, error: 'Debe haber al menos 1 VLAN' };
-  const seen = new Set();
-  for (const v of data.vlans) {
-    if (!Number.isInteger(v.id) || v.id < 1 || v.id > 4094)
-      return { ok: false, error: `VLAN ID inválido: ${v.id}` };
-    if (seen.has(v.id))
-      return { ok: false, error: `VLAN ID duplicado: ${v.id}` };
-    seen.add(v.id);
-    if (typeof v.name !== 'string' || !v.name.trim())
-      return { ok: false, error: `VLAN ${v.id}: nombre inválido` };
-    if (!Number.isInteger(v.hosts_required) || v.hosts_required < 2 || v.hosts_required > 500)
-      return { ok: false, error: `VLAN ${v.id}: hosts requeridos debe estar entre 2 y 500` };
-    if (!['all', 'core'].includes(v.floor))
-      return { ok: false, error: `VLAN ${v.id}: floor debe ser "all" o "core"` };
+  if (!inf.hosts_piso || inf.hosts_piso < 1 || inf.hosts_piso > 500) {
+    return { ok: false, error: 'hosts_piso debe estar entre 1 y 500' };
   }
 
   return { ok: true, plan: data };
 }
 
-/**
- * Aplica un plan validado al estado S y al DOM.
- * Recalcula análisis IPv4 y VLSM, y navega al paso de Resumen.
- */
 function applyPlan(plan) {
-  /* infrastructure */
-  S.pisos         = plan.infrastructure.pisos;
-  S.core_piso     = plan.infrastructure.core_piso;
-  S.hosts_piso    = plan.infrastructure.hosts_piso;
-  S.puertos       = plan.infrastructure.puertos;
-  S.redundancia   = plan.infrastructure.redundancia;
-  S.vendor        = plan.infrastructure.vendor;
-  S.growth_factor = plan.infrastructure.growth_factor;
+  const inf = plan.infrastructure || {};
+  const svc = plan.services       || {};
 
-  /* ipv4 */
-  S.override = plan.ipv4?.override || '';
+  S.pisos        = inf.pisos        ?? 3;
+  S.core_piso    = inf.core_piso    ?? 1;
+  S.hosts_piso   = inf.hosts_piso   ?? null;
+  S.puertos      = inf.puertos      ?? 48;
+  S.redundancia  = inf.redundancia  ?? 'single';
+  S.vendor       = inf.vendor       ?? 'cisco';
+  S.growth_factor = inf.growth_factor ?? 2;
+  S.hardening_l2 = inf.hardening_l2 ?? true;
 
-  /* services */
-  S.dns4        = plan.services.dns4;
-  S.dns6        = plan.services.dns6;
-  S.ntp         = plan.services.ntp;
-  S.domain      = plan.services.domain;
-  S.ipv6        = !!plan.services.ipv6;
-  S.wan_nexthop = plan.services.wan_nexthop || '';
-  S.wan_routes  = Array.isArray(plan.services.wan_routes) ? plan.services.wan_routes : [];
+  S.override = (plan.ipv4 && plan.ipv4.override) || '';
 
-  /* vlans */
-  S.vlan_defs = plan.vlans.map(v => ({
+  S.dns4        = svc.dns4        ?? '8.8.8.8';
+  S.dns6        = svc.dns6        ?? '2001:4860:4860::8888';
+  S.ntp         = svc.ntp         ?? 'pool.ntp.org';
+  S.domain      = svc.domain      ?? 'corp.local';
+  S.ipv6        = svc.ipv6        ?? true;
+  S.wan_nexthop = svc.wan_nexthop ?? '';
+  S.wan_routes  = Array.isArray(svc.wan_routes) ? svc.wan_routes : [];
+
+  S.vlan_defs = (plan.vlans || []).map(v => ({
     id:             v.id,
     name:           v.name,
     type:           v.type,
-    badge:          v.badge || TYPE_BADGE[v.type] || 'blue',
+    badge:          v.badge || (TYPE_BADGE[v.type] || 'blue'),
     floor:          v.floor,
     hosts_required: v.hosts_required,
-    reserved_ips:   Array.isArray(v.reserved_ips) ? v.reserved_ips.slice() : [],
+    reserved_ips:   (v.reserved_ips || []).map(r => ({
+      id:    r.id || genResId(),
+      alias: r.alias,
+      ip4:   r.ip4 || null,
+      ip6:   r.ip6 || null,
+      stack: r.stack,
+    })),
   }));
 
-  /* Sincronizar DOM */
-  syncDOMFromState();
+  /* Sincronizar UI */
+  const inpPisos = document.getElementById('inp-pisos');     if (inpPisos) inpPisos.value = String(S.pisos);
+  const inpCore  = document.getElementById('inp-core');      if (inpCore)  { inpCore.value  = String(S.core_piso); inpCore.max = S.pisos; }
+  const inpHosts = document.getElementById('inp-hosts');     if (inpHosts) inpHosts.value = String(S.hosts_piso || '');
+  const selPuertos = document.getElementById('sel-puertos'); if (selPuertos) selPuertos.value = String(S.puertos);
+  const selGrowth  = document.getElementById('sel-growth');  if (selGrowth)  selGrowth.value = String(S.growth_factor);
+  const inpOverride = document.getElementById('inp-override'); if (inpOverride) inpOverride.value = S.override;
+  const inpDns4   = document.getElementById('inp-dns4');     if (inpDns4)   inpDns4.value   = S.dns4;
+  const inpDns6   = document.getElementById('inp-dns6');     if (inpDns6)   inpDns6.value   = S.dns6;
+  const inpNtp    = document.getElementById('inp-ntp');      if (inpNtp)    inpNtp.value    = S.ntp;
+  const inpDomain = document.getElementById('inp-domain');   if (inpDomain) inpDomain.value = S.domain;
+  const inpWanNh  = document.getElementById('inp-wan-nexthop'); if (inpWanNh) inpWanNh.value = S.wan_nexthop;
+  const inpWanRt  = document.getElementById('inp-wan-routes');  if (inpWanRt) inpWanRt.value = S.wan_routes.join('\n');
+  const cbIpv6    = document.getElementById('chk-ipv6');     if (cbIpv6)    cbIpv6.checked = S.ipv6;
+  const cbHard    = document.getElementById('chk-hardening');if (cbHard)    cbHard.checked = S.hardening_l2;
 
-  /* Recalcular todo */
-  runAnalysis();
-  buildVLANPlan();
-  renderVLANCards();
-  updateVlansCount();
-  renderSummary();
-
-  /* Ir al paso de Resumen para que el usuario vea el plan completo */
-  activateStep(4);
-}
-
-/**
- * Sincroniza los inputs del DOM con los valores actuales de S.
- * Se usa después de cargar un plan o restaurar autoguardado.
- */
-function syncDOMFromState() {
-  /* Paso 1 — infraestructura */
-  const inpPisos = document.getElementById('inp-pisos');
-  const inpCore  = document.getElementById('inp-core');
-  if (inpPisos) inpPisos.value = S.pisos;
-  if (inpCore) {
-    inpCore.max   = S.pisos;
-    inpCore.value = S.core_piso;
-  }
-  const hint = document.getElementById('hint-core');
-  if (hint) hint.textContent = `Rango: 1 – ${S.pisos} (debe ser ≤ número de pisos)`;
-  const err  = document.getElementById('error-core');
-  if (err)  err.textContent  = `Debe estar entre 1 y ${S.pisos}`;
-
-  const inpHosts = document.getElementById('inp-hosts');
-  if (inpHosts) inpHosts.value = S.hosts_piso ?? '';
-
-  document.getElementById('sel-puertos').value = String(S.puertos);
-  const selGrowth = document.getElementById('sel-growth');
-  if (selGrowth) selGrowth.value = String(S.growth_factor);
-
-  /* Toggles */
   document.querySelectorAll('#tg-redund .toggle-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.value === S.redundancia)
   );
@@ -3424,61 +3166,22 @@ function syncDOMFromState() {
     b.classList.toggle('active', b.dataset.value === S.vendor)
   );
 
-  /* Paso 2 — override CIDR */
-  const inpOver = document.getElementById('inp-override');
-  if (inpOver) inpOver.value = S.override || '';
+  setText('st-vendor', S.vendor === 'cisco' ? 'Cisco' : 'Huawei');
+  setText('st-redund', S.redundancia === 'single' ? 'Single-Link' : 'Dual-Link (LACP)');
 
-  /* Paso 3 — servicios */
-  document.getElementById('inp-dns4').value   = S.dns4;
-  document.getElementById('inp-dns6').value   = S.dns6;
-  document.getElementById('inp-ntp').value    = S.ntp;
-  document.getElementById('inp-domain').value = S.domain;
-  document.getElementById('chk-ipv6').checked = S.ipv6;
-  document.getElementById('ipv6-info')?.classList.toggle('hidden', !S.ipv6);
-
-  /* Paso 3 — WAN */
-  const wn = document.getElementById('inp-wan-nexthop');
-  if (wn) wn.value = S.wan_nexthop || '';
-  const wr = document.getElementById('inp-wan-routes');
-  if (wr) wr.value = (S.wan_routes || []).join('\n');
-
-  /* Limpiar estados de validación previos */
-  document.querySelectorAll('.field.invalid').forEach(f => f.classList.remove('invalid'));
-
-  /* Panel lateral */
-  setText('st-vendor',  S.vendor === 'cisco' ? 'Cisco' : 'Huawei');
-  setText('st-redund',  S.redundancia === 'single' ? 'Single-Link' : 'Dual-Link (LACP)');
-  setText('st-hpiso',   S.hosts_piso ?? '—');
-  setText('st-ports',   S.puertos);
-  setText('st-sw',      S.hosts_piso ? Math.ceil(S.hosts_piso / S.puertos) : '—');
+  runAnalysis();
+  buildVLANPlan();
+  renderVLANCards();
+  updateVlansCount();
+  onHostsChange();
+  activateStep(0);
 }
 
-/**
- * Descarga el plan actual como archivo JSON.
- * Solo se permite si hay datos mínimos (paso 1 completo).
- */
-function exportPlanJSON() {
-  if (!S.pisos || !S.core_piso || !S.hosts_piso) {
-    showToast('Completa al menos el paso 1 antes de exportar', 'error');
-    return;
-  }
-  const plan = buildPlanJSON();
-  const json = JSON.stringify(plan, null, 2);
-  const a    = document.createElement('a');
-  a.href     = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-  a.download = `netplan_${S.domain}_${new Date().toISOString().slice(0,10)}.json`;
-  a.click();
-  URL.revokeObjectURL(a.href);
-  showToast('Plan JSON exportado correctamente', 'success');
-}
-
-/** Dispara el diálogo de selección de archivo. */
 function triggerImportJSON() {
   const fi = document.getElementById('file-import-json');
   if (fi) { fi.value = ''; fi.click(); }
 }
 
-/** Maneja el archivo seleccionado para importar. */
 function onImportFileSelected(evt) {
   const file = evt.target.files?.[0];
   if (!file) return;
@@ -3501,7 +3204,6 @@ function onImportFileSelected(evt) {
       return;
     }
     applyPlan(result.plan);
-    /* JSON importado desde archivo no está vinculado a ningún plan en nube */
     S.cloud_plan_id = null;
     showToast('Plan cargado correctamente', 'success');
   };
@@ -3509,31 +3211,19 @@ function onImportFileSelected(evt) {
   reader.readAsText(file);
 }
 
-/* ── AUTOGUARDADO EN localStorage ────────────────────────────── */
-
-/**
- * Guarda el plan actual en localStorage con debounce.
- * Solo guarda si hay datos mínimos (evita guardar plantilla vacía).
- */
 function autosave() {
   clearTimeout(_autosaveTimer);
   _autosaveTimer = setTimeout(() => {
     try {
-      /* No guardar hasta que el usuario haya tocado algo significativo */
       if (!S.hosts_piso) return;
       const plan = buildPlanJSON();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(plan));
     } catch (e) {
-      /* Cuota llena, modo privado, etc. — silencioso */
       console.warn('Autoguardado no disponible:', e.message);
     }
   }, AUTOSAVE_DEBOUNCE);
 }
 
-/**
- * Comprueba si hay un autoguardado al cargar la app.
- * Si lo hay, muestra el banner de recuperación.
- */
 function checkAutosaveOnLoad() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -3542,7 +3232,6 @@ function checkAutosaveOnLoad() {
     if (!plan || plan.schema !== PLAN_SCHEMA_VERSION) return;
     if (!plan.infrastructure?.hosts_piso) return;
 
-    /* Mostrar banner con metadata */
     const banner  = document.getElementById('recovery-banner');
     const metaEl  = document.getElementById('recovery-meta');
     if (!banner) return;
@@ -3561,7 +3250,6 @@ function checkAutosaveOnLoad() {
   }
 }
 
-/** Restaura el autoguardado y lo aplica al plan actual. */
 function restoreAutosave() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -3576,8 +3264,6 @@ function restoreAutosave() {
       return;
     }
     applyPlan(result.plan);
-    /* El autoguardado local no rastrea el ID de nube; al restaurar
-       lo desvinculamos para evitar sobreescribir el plan equivocado */
     S.cloud_plan_id = null;
     document.getElementById('recovery-banner')?.classList.add('hidden');
     showToast('Plan restaurado desde autoguardado', 'success');
@@ -3586,7 +3272,6 @@ function restoreAutosave() {
   }
 }
 
-/** Descarta el autoguardado actual. */
 function discardAutosave() {
   try { localStorage.removeItem(STORAGE_KEY); } catch(e) {}
   document.getElementById('recovery-banner')?.classList.add('hidden');
@@ -3596,18 +3281,8 @@ function discardAutosave() {
 
 /* ══════════════════════════════════════════════════════════════
    18. NUBE — UI Y HANDLERS DE FIREBASE
-   ══════════════════════════════════════════════════════════════
-   Toda la lógica Firebase vive en firebase-cloud.js (módulo ES6).
-   Aquí solo se invoca la API expuesta en window.NetPlanCloud.
-   Si la nube no está configurada, los botones .cloud-only quedan
-   ocultos por CSS y estos handlers nunca se llaman.
    ══════════════════════════════════════════════════════════════ */
 
-/**
- * Espera el evento que dispara firebase-cloud.js cuando termina de
- * inicializar. Si la nube quedó disponible, activa la UI cloud
- * (clase body.cloud-ready) y suscribe el cambio de auth.
- */
 window.addEventListener('netplan-cloud-ready', (e) => {
   if (!e.detail?.available) return;
   document.body.classList.add('cloud-ready');
@@ -3616,11 +3291,6 @@ window.addEventListener('netplan-cloud-ready', (e) => {
   }
 });
 
-/**
- * Actualiza el menú de usuario según el estado de auth.
- * Para usuarios anónimos: avatar "?" y botón "Iniciar sesión".
- * Para usuarios con Google: avatar con inicial, email visible y botón "Cerrar sesión".
- */
 function updateUserMenuUI(user) {
   if (!user) return;
   const avatar    = document.getElementById('user-avatar');
@@ -3649,13 +3319,11 @@ function updateUserMenuUI(user) {
   }
 }
 
-/** Abre/cierra el dropdown del menú de usuario. */
 function toggleUserMenu(evt) {
   evt?.stopPropagation();
   document.getElementById('user-menu-dropdown')?.classList.toggle('hidden');
 }
 
-/* Cerrar dropdown al hacer click afuera */
 document.addEventListener('click', (e) => {
   const menu = document.getElementById('user-menu');
   const dd   = document.getElementById('user-menu-dropdown');
@@ -3664,14 +3332,10 @@ document.addEventListener('click', (e) => {
   }
 });
 
-/** Inicia sesión con Google. */
 async function cloudSignInWithGoogle() {
   if (!window.NetPlanCloud?.isAvailable()) return;
   document.getElementById('user-menu-dropdown')?.classList.add('hidden');
 
-  /* Si el modal de planes está abierto, lo cerramos antes del popup
-     (algunos navegadores bloquean popups con modales encima) y lo
-     reabrimos al volver para que el usuario vea su lista actualizada. */
   const modal      = document.getElementById('modal-cloud-plans');
   const wasOpen    = modal && !modal.classList.contains('hidden');
   if (wasOpen) modal.classList.add('hidden');
@@ -3682,7 +3346,7 @@ async function cloudSignInWithGoogle() {
     if (wasOpen) openCloudPlansModal();
   } catch (e) {
     if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
-      if (wasOpen) modal.classList.remove('hidden');   // restaurar modal
+      if (wasOpen) modal.classList.remove('hidden');
       return;
     }
     showToast('No se pudo iniciar sesión: ' + (e.message || e.code), 'error');
@@ -3690,7 +3354,6 @@ async function cloudSignInWithGoogle() {
   }
 }
 
-/** Cierra sesión y vuelve a anónimo. */
 async function cloudSignOut() {
   if (!window.NetPlanCloud?.isAvailable()) return;
   if (!confirm('¿Cerrar sesión? Tus planes en la nube quedarán inaccesibles hasta que vuelvas a iniciar sesión con la misma cuenta.')) {
@@ -3706,32 +3369,24 @@ async function cloudSignOut() {
   }
 }
 
-/** Abre el modal de planes en la nube y refresca la lista. */
 function openCloudPlansModal() {
   if (!window.NetPlanCloud?.isAvailable()) {
     showToast('Nube no configurada', 'error');
     return;
   }
   document.getElementById('modal-cloud-plans')?.classList.remove('hidden');
-  /* Pre-llenar el nombre con el dominio del plan actual si está vacío */
   const inp = document.getElementById('inp-plan-name');
   if (inp && !inp.value && S.domain) inp.value = S.domain;
   refreshCloudPlansList();
 }
 
-/** Cierra el modal de planes en la nube. */
 function closeCloudPlansModal() {
   document.getElementById('modal-cloud-plans')?.classList.add('hidden');
 }
 
-/**
- * Guarda el plan actual en la nube.
- * Si S.cloud_plan_id existe, sobreescribe ese plan; de lo contrario crea uno nuevo.
- */
 async function cloudSaveCurrentPlan() {
   if (!window.NetPlanCloud?.isAvailable()) return;
 
-  /* Validación mínima — coherente con exportPlanJSON */
   if (!S.pisos || !S.core_piso || !S.hosts_piso) {
     showToast('Completa al menos el paso 1 antes de guardar', 'error');
     return;
@@ -3750,10 +3405,6 @@ async function cloudSaveCurrentPlan() {
   }
 }
 
-/**
- * Refresca la lista de planes en el modal.
- * Renderiza filas con nombre, metadata y acciones (cargar / renombrar / eliminar).
- */
 async function refreshCloudPlansList() {
   if (!window.NetPlanCloud?.isAvailable()) return;
   const list = document.getElementById('cloud-plans-list');
@@ -3780,63 +3431,58 @@ async function refreshCloudPlansList() {
       row.innerHTML = `
         <div class="cloud-plan-info">
           <span class="cloud-plan-name">${escapeHTML(p.name)}${isCurrent ? ' · <em style="color:var(--accent);font-style:normal">actual</em>' : ''}</span>
-          <span class="cloud-plan-meta">${p.vlanCount} VLAN${p.vlanCount !== 1 ? 's' : ''} · ${escapeHTML(p.domain || '—')} · ${updated}</span>
+          <span class="cloud-plan-meta">${p.vlanCount} VLAN${p.vlanCount !== 1 ? 's' : ''} · ${updated}</span>
         </div>
         <div class="cloud-plan-actions">
-          <button class="btn-cloud-action" title="Cargar este plan" data-act="load" data-id="${p.id}">↓</button>
-          <button class="btn-cloud-action" title="Renombrar"        data-act="rename" data-id="${p.id}" data-name="${escapeHTML(p.name)}">✎</button>
-          <button class="btn-cloud-action btn-cloud-action-danger" title="Eliminar" data-act="delete" data-id="${p.id}" data-name="${escapeHTML(p.name)}">✕</button>
-        </div>
-      `;
+          <button class="btn-cloud-action" onclick="cloudLoadPlan('${p.id}')">↓ Cargar</button>
+          <button class="btn-cloud-action btn-cloud-rename" onclick="cloudRenamePlan('${p.id}','${escapeHTML(p.name).replace(/'/g, "\\'")}')">✎</button>
+          <button class="btn-cloud-action btn-cloud-delete" onclick="cloudDeletePlan('${p.id}','${escapeHTML(p.name).replace(/'/g, "\\'")}')">✕</button>
+        </div>`;
       list.appendChild(row);
     }
-
-    /* Event delegation para los botones de acción */
-    list.querySelectorAll('.btn-cloud-action').forEach(btn => {
-      btn.addEventListener('click', () => onCloudPlanAction(btn));
-    });
   } catch (e) {
-    list.innerHTML = `<p class="placeholder-msg" style="color:var(--error)">Error: ${escapeHTML(e.message)}</p>`;
+    list.innerHTML = `<p class="placeholder-msg">Error al cargar planes: ${escapeHTML(e.message)}</p>`;
   }
 }
 
-/** Maneja click en los botones de cada plan listado. */
-async function onCloudPlanAction(btn) {
-  const id   = btn.dataset.id;
-  const act  = btn.dataset.act;
-  const name = btn.dataset.name || '';
+async function cloudLoadPlan(id) {
+  if (!window.NetPlanCloud?.isAvailable()) return;
+  try {
+    const planData = await window.NetPlanCloud.loadPlan(id);
+    if (!planData) {
+      showToast('Plan no encontrado', 'error');
+      return;
+    }
+    const result = validateAndMigratePlan(planData);
+    if (!result.ok) {
+      showToast('Plan corrupto: ' + result.error, 'error');
+      return;
+    }
+    applyPlan(result.plan);
+    S.cloud_plan_id = id;
+    closeCloudPlansModal();
+    showToast('Plan cargado desde la nube', 'success');
+  } catch (e) {
+    showToast('Error al cargar: ' + e.message, 'error');
+  }
+}
 
-  if (act === 'load') {
-    try {
-      const plan = await window.NetPlanCloud.loadPlan(id);
-      const result = validateAndMigratePlan(plan);
-      if (!result.ok) {
-        showToast('Plan corrupto: ' + result.error, 'error');
-        return;
-      }
-      applyPlan(result.plan);
-      S.cloud_plan_id = id;
-      closeCloudPlansModal();
-      showToast('Plan cargado desde la nube', 'success');
-    } catch (e) {
-      showToast('Error al cargar: ' + e.message, 'error');
-    }
+async function cloudRenamePlan(id, currentName) {
+  if (!window.NetPlanCloud?.isAvailable()) return;
+  const newName = prompt('Nuevo nombre para el plan:', currentName);
+  if (!newName || newName.trim() === '' || newName.trim() === currentName) return;
+  try {
+    await window.NetPlanCloud.renamePlan(id, newName.trim());
+    showToast('Plan renombrado', 'success');
+    refreshCloudPlansList();
+  } catch (e) {
+    showToast('Error al renombrar: ' + e.message, 'error');
   }
-  else if (act === 'rename') {
-    const newName = prompt('Nuevo nombre del plan:', name);
-    if (newName === null) return;          // canceló
-    const trimmed = newName.trim();
-    if (!trimmed) { showToast('El nombre no puede estar vacío', 'error'); return; }
-    try {
-      await window.NetPlanCloud.renamePlan(id, trimmed);
-      showToast('Plan renombrado', 'success');
-      refreshCloudPlansList();
-    } catch (e) {
-      showToast('Error al renombrar: ' + e.message, 'error');
-    }
-  }
-  else if (act === 'delete') {
-    if (!confirm(`¿Eliminar "${name}" permanentemente? Esta acción no se puede deshacer.`)) return;
+}
+
+async function cloudDeletePlan(id, name) {
+  if (!window.NetPlanCloud?.isAvailable()) return;
+  if (confirm(`¿Eliminar plan "${name}"?\nEsta acción no se puede deshacer.`)) {
     try {
       await window.NetPlanCloud.deletePlan(id);
       if (S.cloud_plan_id === id) S.cloud_plan_id = null;
@@ -3848,7 +3494,6 @@ async function onCloudPlanAction(btn) {
   }
 }
 
-/** Escapa texto para inserción segura como HTML. */
 function escapeHTML(s) {
   return String(s ?? '').replace(/[&<>"']/g,
     c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -3859,12 +3504,6 @@ function escapeHTML(s) {
    19. INICIALIZACIÓN
    ══════════════════════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
-  /*
-   * Al cargar, S.pisos = 3 y S.core_piso = 1 (inicializados en S),
-   * que coinciden con los valores por defecto de inp-pisos e inp-core.
-   * El botón Siguiente arranca deshabilitado hasta que inp-hosts sea válido.
-   */
   activateStep(0);
-  /* Verificar si hay un plan auto-guardado para ofrecer recuperación */
   checkAutosaveOnLoad();
 });
