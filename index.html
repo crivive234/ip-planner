@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NetPlan Pro v4.0</title>
+  <title>NetPlan Pro v4.6</title>
   <!--
   ┌─────────────────────────────────────────────────────────────┐
-  │  NetPlan Pro v4.0                                           │
+  │  NetPlan Pro v4.6                                           │
   │  Planificación automática de redes WAN/LAN Dual-Stack       │
   │  Fundación Universitaria Compensar                          │
   └─────────────────────────────────────────────────────────────┘
@@ -22,7 +22,7 @@
   <header class="app-header">
     <div class="header-brand">
       <span class="brand-logo">NET<span>PLAN</span></span>
-      <span class="brand-badge">v4.0</span>
+      <span class="brand-badge">v4.6</span>
     </div>
     <p class="header-subtitle">
       Planificación automática · IPv4 VLSM + IPv6 Dual-Stack · Cisco &amp; Huawei
@@ -206,6 +206,24 @@
             </button>
           </div>
         </div>
+
+        <!-- NUEVO v4.6 — Hardening L2 básico -->
+        <div class="field-group">
+          <span class="group-label">Hardening de capa 2</span>
+          <div class="toggle-row">
+            <div class="toggle-row-text">
+              <span class="toggle-row-label">Hardening L2 básico</span>
+              <span class="toggle-row-sub">
+                Port-security (máx. 2 MACs por puerto) + BPDU guard en switches de acceso.
+                Recomendado para entornos corporativos.
+              </span>
+            </div>
+            <label class="switch" aria-label="Activar Hardening L2 básico">
+              <input type="checkbox" id="chk-hardening" checked onchange="onHardeningToggle(this)" />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+        </div>
       </section><!-- /step-0 -->
 
       <!-- ══════════════════════════════════════════
@@ -287,12 +305,12 @@
               <input type="text" id="inp-dns6" value="2001:4860:4860::8888"
                      placeholder="Ej: 2001:4860:4860::8888" oninput="onServicesChange()" />
               <span class="field-hint">Dirección IPv6 · notación :: permitida</span>
-              <span class="field-error">IPv6 inválida. Ejemplo: 2001:4860:4860::8888</span>
+              <span class="field-error">IPv6 inválida. Formato hexadecimal con ':' o '::'</span>
             </div>
           </div>
         </div>
 
-        <!-- NTP y dominio -->
+        <!-- NTP + Dominio -->
         <div class="field-group">
           <span class="group-label">NTP y dominio interno</span>
           <div class="grid-2">
@@ -300,15 +318,15 @@
               <label for="inp-ntp">Servidor NTP</label>
               <input type="text" id="inp-ntp" value="pool.ntp.org"
                      placeholder="Ej: pool.ntp.org" oninput="onServicesChange()" />
-              <span class="field-hint">IP válida o hostname (ej: pool.ntp.org)</span>
-              <span class="field-error">Ingresa una IPv4 o hostname válido</span>
+              <span class="field-hint">IPv4 o hostname (ej: pool.ntp.org, 1.cl.pool.ntp.org)</span>
+              <span class="field-error">NTP inválido. Debe ser IPv4 o hostname</span>
             </div>
             <div class="field" id="field-domain">
               <label for="inp-domain">Dominio interno</label>
               <input type="text" id="inp-domain" value="corp.local"
                      placeholder="Ej: corp.local" oninput="onServicesChange()" />
-              <span class="field-hint">Formato nombre.tld (ej: corp.local)</span>
-              <span class="field-error">Formato inválido. Usa nombre.tld (ej: corp.local)</span>
+              <span class="field-hint">Dominio para resolución interna (DHCP)</span>
+              <span class="field-error">Dominio inválido. Usa nombre.tld (ej: corp.local)</span>
             </div>
           </div>
         </div>
@@ -347,6 +365,7 @@
             <div class="info-body">
               <strong style="font-size:12px">El enrutamiento inter-VLAN es automático</strong>
               <span>Las VLANs se comunican entre sí via SVIs en el Core Switch (rutas conectadas).
+              Las rutas estáticas solo aplican para tráfico externo o redes remotas.
               Completa esta sección solo si existen sedes remotas o redes WAN adicionales.</span>
             </div>
           </div>
@@ -507,15 +526,22 @@
             </p>
           </div>
         </div>
+
+        <!-- NUEVO v4.6 — Aviso de impresión -->
+        <p class="print-hint no-print" style="font-size:11px;color:var(--text-muted);margin-top:var(--gap);line-height:1.7">
+          <strong>💡 Tip:</strong> Para imprimir o guardar este resumen como PDF, usa
+          <kbd>Ctrl</kbd>+<kbd>P</kbd> (Windows/Linux) o <kbd>⌘</kbd>+<kbd>P</kbd> (Mac).
+          El navegador exportará solo las métricas, tabla VLSM y topología — sin sidebar ni botones.
+        </p>
       </section><!-- /step-4 -->
 
       <!-- ══════════════════════════════════════════
-           PASO 06 — EXPORTAR
+           PASO 06 — EXPORTAR (REORGANIZADO v4.6)
            ══════════════════════════════════════════ -->
       <section class="step-content" id="step-5">
         <div class="step-header">
           <h2 class="step-title">Exportar configuraciones</h2>
-          <p class="step-desc">Previsualiza la configuración · Un clic exporta el plan completo</p>
+          <p class="step-desc">Configuraciones por dispositivo · Cada bloque copiable o descargable</p>
         </div>
 
         <!-- Tabs: config por vendor + borrado seguro -->
@@ -542,32 +568,36 @@
                   onclick="selectRollbackVendor(this)" role="tab">FortiGate</button>
         </div>
 
-        <!-- Área de código -->
-        <div class="export-view-wrapper">
-          <div class="code-wrapper" id="code-wrapper">
-            <button class="copy-btn" id="copy-btn" onclick="copyCode()">Copiar</button>
-            <pre class="code-block"><code id="export-code">Selecciona un vendor para ver la configuración generada</code></pre>
-          </div>
+        <!-- NUEVO v4.6 — Bloques de configuración por dispositivo -->
+        <div class="export-blocks" id="export-blocks">
+          <p class="placeholder-msg">Completa el plan antes de generar configuraciones</p>
         </div>
 
-        <!-- Botones de exportación: 6 formatos organizados por uso -->
+        <!-- NUEVO v4.6 — Barra global "Descargar todo (.zip)" -->
+        <div class="export-zip-bar hidden" id="export-zip-bar">
+          <div class="export-zip-info">
+            <span class="export-zip-icon">📦</span>
+            <div class="export-zip-text">
+              <strong>Descargar todas las configuraciones</strong>
+              <span>Un archivo .zip con un .txt por dispositivo (CORE + SW-ACC + FW) y un README</span>
+            </div>
+          </div>
+          <button class="btn-zip-download" onclick="downloadAllConfigsZip()">
+            ↓ Descargar .zip
+          </button>
+        </div>
+
+        <!-- NUEVO v4.6 — Sección de exportación reorganizada (3 categorías) -->
         <div class="export-formats">
           <div class="export-format-group">
             <span class="export-format-label">Documento completo</span>
             <div class="export-format-row">
               <button class="btn-export-fmt btn-export-primary"
-                      onclick="downloadPlan()"
-                      title="HTML autocontenido con todo: métricas, VLSM, configs, topología, rollback">
-                <span class="export-icon">⬢</span>
-                <span class="export-name">HTML completo</span>
-                <span class="export-meta">Auto­contenido · imprimible</span>
-              </button>
-              <button class="btn-export-fmt"
-                      onclick="exportPlanPDF()"
-                      title="PDF profesional con resumen, VLSM y reservas">
-                <span class="export-icon">▤</span>
-                <span class="export-name">PDF ejecutivo</span>
-                <span class="export-meta">Entregable firmable</span>
+                      onclick="exportPlanExcel()"
+                      title="Libro Excel con 7 hojas: Resumen, Inventario, VLSM IPv4, VLSM IPv6, Reservas, Enrutamiento, Servicios">
+                <span class="export-icon">⊞</span>
+                <span class="export-name">Excel (.xlsx)</span>
+                <span class="export-meta">7 hojas · entregable formal</span>
               </button>
             </div>
           </div>
@@ -575,13 +605,6 @@
           <div class="export-format-group">
             <span class="export-format-label">Datos tabulares</span>
             <div class="export-format-row">
-              <button class="btn-export-fmt"
-                      onclick="exportPlanExcel()"
-                      title="Libro Excel con hojas Resumen / VLSM IPv4 / VLSM IPv6 / Reservas">
-                <span class="export-icon">⊞</span>
-                <span class="export-name">Excel (.xlsx)</span>
-                <span class="export-meta">4 hojas · ingenieros</span>
-              </button>
               <button class="btn-export-fmt"
                       onclick="exportPlanJSON()"
                       title="JSON editable y reimportable — ideal para versionar">
@@ -596,13 +619,6 @@
             <span class="export-format-label">Topología editable</span>
             <div class="export-format-row">
               <button class="btn-export-fmt"
-                      onclick="exportPlanMermaid()"
-                      title="Texto Mermaid pegable en GitHub, Notion, Confluence">
-                <span class="export-icon">⌘</span>
-                <span class="export-name">Mermaid</span>
-                <span class="export-meta">GitHub · Notion · Confluence</span>
-              </button>
-              <button class="btn-export-fmt"
                       onclick="exportPlanDrawio()"
                       title="XML para abrir en draw.io / diagrams.net">
                 <span class="export-icon">◇</span>
@@ -614,10 +630,14 @@
         </div>
 
         <p style="font-size:11px;color:var(--text-muted);margin-top:14px;line-height:1.7">
-          <strong>HTML completo:</strong> incluye todo (métricas, VLSM, IPs reserva,
-          enrutamiento, topología SVG, configs por vendor, borrado seguro).<br>
-          <strong>JSON editable:</strong> permite cargar el plan luego con el botón
-          "Cargar plan" del header para continuar editando.
+          <strong>Configuraciones por dispositivo:</strong> cada bloque arriba se puede copiar
+          al portapapeles o descargar como archivo <code>.txt</code> independiente.
+          El botón <strong>Descargar .zip</strong> empaqueta todos los <code>.txt</code> del vendor activo
+          en un solo archivo con README.<br>
+          <strong>Excel (.xlsx):</strong> entregable formal con todo el plan (resumen, inventario,
+          VLSM IPv4/IPv6, reservas, enrutamiento, servicios).<br>
+          <strong>JSON editable:</strong> permite cargar el plan luego con el botón "Cargar plan"
+          del header para continuar editando.
         </p>
       </section><!-- /step-5 -->
 
@@ -723,16 +743,32 @@
     </div>
   </div>
 
-  <!-- MODAL PLAN FINALIZADO -->
+  <!-- MODAL PLAN FINALIZADO v4.6 — 3 opciones -->
   <div class="modal-overlay hidden" id="modal-finish">
     <div class="modal">
       <div class="modal-icon">✓</div>
       <h3 class="modal-title">Plan de red completado</h3>
-      <p class="modal-desc">¿Deseas realizar un nuevo plan de red?</p>
-      <div class="modal-actions">
-        <button class="btn-modal-secondary" onclick="closeModal()">No, seguir revisando</button>
-        <button class="btn-modal-primary" onclick="resetApp()">Sí, nuevo plan</button>
+      <p class="modal-desc">
+        ¿Qué deseas hacer con el plan actual?
+      </p>
+      <div class="modal-actions modal-actions-stack">
+        <button class="btn-modal-primary" onclick="finishSaveAndStay()">
+          ↓ Guardar y quedarme aquí
+        </button>
+        <button class="btn-modal-secondary" onclick="finishSaveAndNew()">
+          ↻ Guardar e iniciar plan nuevo
+        </button>
+        <button class="btn-modal-danger" onclick="finishDiscardAndNew()">
+          ✕ Iniciar plan nuevo sin guardar
+        </button>
+        <button class="btn-modal-text" onclick="closeModal()">
+          Volver al plan
+        </button>
       </div>
+      <p class="modal-footer-hint">
+        <strong>Guardar:</strong> si hay sesión Firebase activa, guarda en la nube.
+        Si no, descarga un archivo JSON al equipo.
+      </p>
     </div>
   </div>
 
