@@ -84,6 +84,13 @@ const S = {
   vlan_edit_id:     null,
   reserve_expanded: {},
   cloud_plan_id:    null,
+
+  /* NUEVO v4.7 — Modo sin nube (Bloque A).
+   * Cuando es true: la app funciona solo con localStorage + JSON.
+   * Los botones cloud están ocultos. Esta decisión persiste en
+   * localStorage.netplan_cloudless="true" hasta que el usuario haga
+   * sign-in desde el header. */
+  cloudless_mode:   false,
 };
 
 
@@ -2981,7 +2988,7 @@ function resetApp() {
   if (swBox) { swBox.classList.add('ok'); swBox.classList.remove('warn'); }
 
   activateStep(0);
-  try { localStorage.removeItem(STORAGE_KEY); } catch(e) {}
+  try { localStorage.removeItem(_autosaveKey()); } catch(e) {}
   document.getElementById('recovery-banner')?.classList.add('hidden');
   showToast('Plan reiniciado. Comienza desde el paso 1.', 'success');
 }
@@ -2992,10 +2999,31 @@ function resetApp() {
    ══════════════════════════════════════════════════════════════ */
 
 const PLAN_SCHEMA_VERSION = 'netplan.v1';
-const STORAGE_KEY         = 'netplan_pro_autosave';
+const STORAGE_KEY_PREFIX  = 'netplan_pro_autosave';
+const CLOUDLESS_FLAG      = 'netplan_cloudless';
 const AUTOSAVE_DEBOUNCE   = 800;
 
 let _autosaveTimer = null;
+
+/**
+ * Devuelve la clave de localStorage para el autoguardado del usuario actual.
+ *
+ * v4.7: las claves están aisladas por UID para resolver el bug del
+ * autoguardado huérfano (cuando cerrabas sesión Google sin sign-out,
+ * el siguiente usuario veía el plan del anterior).
+ *
+ *   - Con sesión Firebase (Google/email): netplan_pro_autosave_{uid}
+ *   - Modo sin nube:                       netplan_pro_autosave_local
+ *   - Sin Firebase configurado (legacy):   netplan_pro_autosave_local
+ */
+function _autosaveKey() {
+  const cloud = window.NetPlanCloud;
+  if (cloud?.isAvailable()) {
+    const user = cloud.getCurrentUser();
+    if (user?.uid) return `${STORAGE_KEY_PREFIX}_${user.uid}`;
+  }
+  return `${STORAGE_KEY_PREFIX}_local`;
+}
 
 function buildPlanJSON() {
   const now = new Date().toISOString();
@@ -3187,7 +3215,7 @@ function autosave() {
     try {
       if (!S.hosts_piso) return;
       const plan = buildPlanJSON();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(plan));
+      localStorage.setItem(_autosaveKey(), JSON.stringify(plan));
     } catch (e) {
       console.warn('Autoguardado no disponible:', e.message);
     }
@@ -3196,7 +3224,7 @@ function autosave() {
 
 function checkAutosaveOnLoad() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(_autosaveKey());
     if (!raw) return;
     const plan = JSON.parse(raw);
     if (!plan || plan.schema !== PLAN_SCHEMA_VERSION) return;
@@ -3222,7 +3250,7 @@ function checkAutosaveOnLoad() {
 
 function restoreAutosave() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(_autosaveKey());
     if (!raw) {
       showToast('No hay autoguardado disponible', 'error');
       return;
@@ -3243,49 +3271,376 @@ function restoreAutosave() {
 }
 
 function discardAutosave() {
-  try { localStorage.removeItem(STORAGE_KEY); } catch(e) {}
+  try { localStorage.removeItem(_autosaveKey()); } catch(e) {}
   document.getElementById('recovery-banner')?.classList.add('hidden');
   showToast('Autoguardado descartado', 'success');
 }
 
 
+
+
 /* ══════════════════════════════════════════════════════════════
-   18. NUBE — UI Y HANDLERS DE FIREBASE
+   18. NUBE — UI Y HANDLERS DE FIREBASE (v4.7 — Bloque A)
+   ══════════════════════════════════════════════════════════════
+   Toda la lógica Firebase vive en firebase-cloud.js (módulo ES6).
+   Aquí solo se invoca la API expuesta en window.NetPlanCloud.
+
+   Cambios v4.7:
+   - Pantalla de login obligatoria al cargar (Google / Email / Sin nube)
+   - Manejo de 3 modales auth: signup, signin, forgot password
+   - Toggle "Mantener sesión" aplica persistencia antes del sign-in
+   - Banner de email no verificado (no bloqueante)
+   - Banner discreto en modo sin nube
+   - Botón "Iniciar sesión" en header cuando está en modo sin nube
    ══════════════════════════════════════════════════════════════ */
 
+/* Flag: ya hemos decidido qué pantalla mostrar (login vs wizard).
+ * Evita parpadeo y re-renders en cargas con sesión persistida. */
+let _authDecisionMade = false;
+
 window.addEventListener('netplan-cloud-ready', (e) => {
-  if (!e.detail?.available) return;
-  document.body.classList.add('cloud-ready');
-  if (window.NetPlanCloud) {
-    window.NetPlanCloud.onAuthStateChanged(updateUserMenuUI);
+  if (!e.detail?.available) {
+    /* Firebase no configurado → entrar directamente al wizard en
+       modo sin nube de facto. No mostramos login porque no hay cloud
+       que ofrecer. */
+    enterCloudlessMode({ silent: true, persist: false });
+    return;
   }
+
+  document.body.classList.add('cloud-ready');
+
+  /* Si el usuario eligió "modo sin nube" antes, respetar esa decisión.
+     No mostrar pantalla de login. */
+  if (localStorage.getItem(CLOUDLESS_FLAG) === 'true') {
+    enterCloudlessMode({ silent: true, persist: false });
+    return;
+  }
+
+  /* Suscribirse a cambios de auth. El primer evento determina si
+     mostramos login (user=null) o vamos directo al wizard (user). */
+  window.NetPlanCloud.onAuthStateChanged(onAuthChange);
 });
+
+function onAuthChange(user) {
+  if (user) {
+    /* Hay sesión activa (recuperada de persistencia o recién creada).
+       Mostrar wizard. */
+    _authDecisionMade = true;
+    hideLoginScreen();
+    updateUserMenuUI(user);
+    /* Re-leer autoguardado bajo la NUEVA clave (por UID).
+       El plan anterior queda intacto en su clave; este usuario verá el suyo. */
+    checkAutosaveOnLoad();
+  } else {
+    /* Sin sesión. Mostrar pantalla de login. */
+    if (!_authDecisionMade) showLoginScreen();
+    /* Si _authDecisionMade ya es true, es porque el usuario hizo
+       signOut. Lo redirigimos al login también. */
+    if (_authDecisionMade) showLoginScreen();
+  }
+}
+
+
+/* ── PANTALLA DE LOGIN ────────────────────────────────────── */
+
+function showLoginScreen() {
+  const overlay = document.getElementById('login-overlay');
+  if (overlay) overlay.classList.remove('hidden');
+  /* Por seguridad, ocultar todos los modales que pudieran estar abiertos */
+  document.getElementById('modal-cloud-plans')?.classList.add('hidden');
+  document.getElementById('modal-finish')?.classList.add('hidden');
+  document.getElementById('modal-email-signup')?.classList.add('hidden');
+  document.getElementById('modal-email-signin')?.classList.add('hidden');
+  document.getElementById('modal-forgot-password')?.classList.add('hidden');
+}
+
+function hideLoginScreen() {
+  const overlay = document.getElementById('login-overlay');
+  if (overlay) overlay.classList.add('hidden');
+  _authDecisionMade = true;
+}
+
+/* Toggle "Mantener sesión" — aplica persistencia. */
+function onRememberToggle(cb) {
+  if (window.NetPlanCloud?.isAvailable()) {
+    window.NetPlanCloud.setRememberSession(cb.checked);
+  }
+}
+
+
+/* ── BOTÓN GOOGLE EN PANTALLA DE LOGIN ─────────────────────── */
+
+async function loginWithGoogle() {
+  if (!window.NetPlanCloud?.isAvailable()) {
+    showToast('Nube no disponible', 'error');
+    return;
+  }
+  /* Aplicar persistencia según toggle ANTES del sign-in */
+  const remember = document.getElementById('chk-remember-session')?.checked ?? true;
+  await window.NetPlanCloud.setRememberSession(remember);
+
+  try {
+    await window.NetPlanCloud.signInWithGoogle();
+    /* hideLoginScreen() se llama desde onAuthChange cuando llegue el evento */
+    showToast('Sesión iniciada con Google', 'success');
+  } catch (e) {
+    handleAuthError(e, 'Google');
+  }
+}
+
+
+/* ── BOTÓN EMAIL EN PANTALLA DE LOGIN ──────────────────────── */
+
+function openEmailSigninModal() {
+  document.getElementById('modal-email-signin')?.classList.remove('hidden');
+  /* Limpiar campos */
+  const inpE = document.getElementById('inp-signin-email');
+  const inpP = document.getElementById('inp-signin-password');
+  if (inpE) inpE.value = '';
+  if (inpP) inpP.value = '';
+  document.getElementById('field-signin-email')?.classList.remove('invalid');
+  document.getElementById('field-signin-password')?.classList.remove('invalid');
+  document.getElementById('btn-do-signin').disabled = true;
+  setTimeout(() => inpE?.focus(), 100);
+}
+
+function closeEmailSigninModal() {
+  document.getElementById('modal-email-signin')?.classList.add('hidden');
+}
+
+function validateSigninForm() {
+  const email = document.getElementById('inp-signin-email')?.value.trim() || '';
+  const pwd   = document.getElementById('inp-signin-password')?.value || '';
+  const ok    = isValidEmail(email) && pwd.length >= 6;
+  document.getElementById('btn-do-signin').disabled = !ok;
+}
+
+async function doEmailSignin() {
+  const email = document.getElementById('inp-signin-email')?.value.trim() || '';
+  const pwd   = document.getElementById('inp-signin-password')?.value || '';
+  if (!isValidEmail(email) || pwd.length < 6) return;
+
+  const remember = document.getElementById('chk-remember-session')?.checked ?? true;
+  await window.NetPlanCloud.setRememberSession(remember);
+
+  const btn = document.getElementById('btn-do-signin');
+  if (btn) { btn.disabled = true; btn.textContent = 'Verificando…'; }
+
+  try {
+    await window.NetPlanCloud.signInWithEmail(email, pwd);
+    closeEmailSigninModal();
+    showToast('Sesión iniciada', 'success');
+  } catch (e) {
+    handleAuthError(e, 'Email');
+    if (btn) { btn.disabled = false; btn.textContent = 'Iniciar sesión'; }
+  }
+}
+
+
+/* ── BOTÓN CREAR CUENTA ─────────────────────────────────────── */
+
+function openEmailSignupModal() {
+  closeEmailSigninModal();
+  document.getElementById('modal-email-signup')?.classList.remove('hidden');
+  /* Limpiar campos */
+  ['inp-signup-email','inp-signup-password','inp-signup-password-confirm'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  ['field-signup-email','field-signup-password','field-signup-password-confirm'].forEach(id => {
+    document.getElementById(id)?.classList.remove('invalid');
+  });
+  document.getElementById('btn-do-signup').disabled = true;
+  setTimeout(() => document.getElementById('inp-signup-email')?.focus(), 100);
+}
+
+function closeEmailSignupModal() {
+  document.getElementById('modal-email-signup')?.classList.add('hidden');
+}
+
+function validateSignupForm() {
+  const email = document.getElementById('inp-signup-email')?.value.trim() || '';
+  const pwd   = document.getElementById('inp-signup-password')?.value || '';
+  const pwd2  = document.getElementById('inp-signup-password-confirm')?.value || '';
+
+  const emailOk = isValidEmail(email);
+  const pwdOk   = pwd.length >= 8;
+  const match   = pwd === pwd2 && pwd2.length > 0;
+
+  /* Solo marcar inválido si el campo no está vacío (UX más amable) */
+  setFieldValidity('field-signup-email',           emailOk || email === '');
+  setFieldValidity('field-signup-password',        pwdOk   || pwd === '');
+  setFieldValidity('field-signup-password-confirm', match  || pwd2 === '');
+
+  document.getElementById('btn-do-signup').disabled = !(emailOk && pwdOk && match);
+}
+
+async function doEmailSignup() {
+  const email = document.getElementById('inp-signup-email')?.value.trim() || '';
+  const pwd   = document.getElementById('inp-signup-password')?.value || '';
+  const pwd2  = document.getElementById('inp-signup-password-confirm')?.value || '';
+
+  if (!isValidEmail(email) || pwd.length < 8 || pwd !== pwd2) return;
+
+  const remember = document.getElementById('chk-remember-session')?.checked ?? true;
+  await window.NetPlanCloud.setRememberSession(remember);
+
+  const btn = document.getElementById('btn-do-signup');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creando cuenta…'; }
+
+  try {
+    const user = await window.NetPlanCloud.signUpWithEmail(email, pwd);
+    /* Enviar email de verificación opcional (no bloqueante) */
+    if (user && !user.emailVerified) {
+      try {
+        await window.NetPlanCloud.sendEmailVerification();
+      } catch(_) { /* no crítico */ }
+    }
+    closeEmailSignupModal();
+    showToast('Cuenta creada. Revisa tu correo para verificarla.', 'success');
+  } catch (e) {
+    handleAuthError(e, 'Crear cuenta');
+    if (btn) { btn.disabled = false; btn.textContent = 'Crear cuenta'; }
+  }
+}
+
+
+/* ── OLVIDÉ MI CONTRASEÑA ──────────────────────────────────── */
+
+function openForgotPasswordModal() {
+  closeEmailSigninModal();
+  document.getElementById('modal-forgot-password')?.classList.remove('hidden');
+  const inp = document.getElementById('inp-forgot-email');
+  if (inp) inp.value = '';
+  document.getElementById('field-forgot-email')?.classList.remove('invalid');
+  document.getElementById('btn-do-forgot').disabled = true;
+  setTimeout(() => inp?.focus(), 100);
+}
+
+function closeForgotPasswordModal() {
+  document.getElementById('modal-forgot-password')?.classList.add('hidden');
+}
+
+function validateForgotForm() {
+  const email = document.getElementById('inp-forgot-email')?.value.trim() || '';
+  document.getElementById('btn-do-forgot').disabled = !isValidEmail(email);
+}
+
+async function doSendPasswordReset() {
+  const email = document.getElementById('inp-forgot-email')?.value.trim() || '';
+  if (!isValidEmail(email)) return;
+
+  const btn = document.getElementById('btn-do-forgot');
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+
+  try {
+    await window.NetPlanCloud.sendPasswordReset(email);
+    closeForgotPasswordModal();
+    showToast(
+      'Si esa cuenta existe, te enviamos un correo con instrucciones.',
+      'success'
+    );
+  } catch (e) {
+    handleAuthError(e, 'Reset');
+    if (btn) { btn.disabled = false; btn.textContent = 'Enviar enlace'; }
+  }
+}
+
+
+/* ── MODO SIN NUBE ──────────────────────────────────────────── */
+
+/**
+ * Activa el modo sin nube: oculta login, muestra wizard y banner discreto.
+ *
+ * @param {Object} opts
+ * @param {boolean} opts.silent  - true: no muestra toast (uso interno al cargar)
+ * @param {boolean} opts.persist - true: guarda flag en localStorage para futuras cargas
+ */
+function enterCloudlessMode({ silent = false, persist = true } = {}) {
+  S.cloudless_mode = true;
+  if (persist) {
+    try { localStorage.setItem(CLOUDLESS_FLAG, 'true'); } catch(_) {}
+  }
+  hideLoginScreen();
+  document.body.classList.add('cloudless-mode');
+  document.getElementById('cloudless-banner')?.classList.remove('hidden');
+  checkAutosaveOnLoad();
+  if (!silent) showToast('Modo sin nube activado', 'success');
+}
+
+/**
+ * Sale del modo sin nube y vuelve a mostrar la pantalla de login.
+ * Si hay un plan actual con contenido, pregunta si conservarlo.
+ */
+function exitCloudlessMode() {
+  const hasContent = S.hosts_piso && S.vlan_defs.length > 0;
+
+  if (hasContent) {
+    const keep = confirm(
+      'Tienes un plan en curso en modo sin nube.\n\n' +
+      '¿Conservar este plan al iniciar sesión?\n\n' +
+      '• Aceptar: el plan actual se mantendrá visible.\n' +
+      '• Cancelar: se descarta el plan y empezarás vacío.'
+    );
+    if (!keep) {
+      /* Limpiar autoguardado local y plan en memoria */
+      try { localStorage.removeItem(_autosaveKey()); } catch(_) {}
+      resetPlanState();
+    }
+  }
+
+  S.cloudless_mode = false;
+  try { localStorage.removeItem(CLOUDLESS_FLAG); } catch(_) {}
+  document.body.classList.remove('cloudless-mode');
+  document.getElementById('cloudless-banner')?.classList.add('hidden');
+  showLoginScreen();
+}
+
+/**
+ * Resetea el plan en memoria pero sin tocar localStorage ni mostrar toast.
+ * Helper de exitCloudlessMode cuando el usuario decide no conservar.
+ */
+function resetPlanState() {
+  S.pisos = 3; S.core_piso = 1; S.hosts_piso = null;
+  S.puertos = 48; S.redundancia = 'single'; S.vendor = 'cisco';
+  S.growth_factor = 2; S.hardening_l2 = true;
+  S.net = null; S.override = '';
+  S.dns4 = '8.8.8.8'; S.dns6 = '2001:4860:4860::8888';
+  S.ntp = 'pool.ntp.org'; S.domain = 'corp.local';
+  S.ipv6 = true; S.wan_nexthop = ''; S.wan_routes = [];
+  S.vlan_defs = []; S.vlans = []; S.ula_prefix = '';
+  S.cloud_plan_id = null;
+  S.vlan_edit_id = null; S.reserve_expanded = {};
+}
+
+
+/* ── MENÚ DE USUARIO EN HEADER ────────────────────────────── */
 
 function updateUserMenuUI(user) {
   if (!user) return;
-  const avatar    = document.getElementById('user-avatar');
-  const label     = document.getElementById('user-label');
-  const info      = document.getElementById('user-menu-info');
-  const btnIn     = document.getElementById('btn-signin-google');
-  const btnOut    = document.getElementById('btn-signout');
-  const anonWarn  = document.getElementById('anon-warning');
+  const avatar = document.getElementById('user-avatar');
+  const label  = document.getElementById('user-label');
+  const info   = document.getElementById('user-menu-info');
+  const verify = document.getElementById('email-verify-banner');
 
-  if (user.isAnonymous) {
-    if (avatar) avatar.textContent = '?';
-    if (label)  label.textContent  = 'Anónimo';
-    if (info)   info.textContent   = 'Sesión anónima — los planes solo son accesibles desde este navegador';
-    btnIn?.classList.remove('hidden');
-    btnOut?.classList.add('hidden');
-    anonWarn?.classList.remove('hidden');
-  } else {
-    const display = user.displayName || user.email || 'Usuario';
-    const initial = (display[0] || 'U').toUpperCase();
-    if (avatar) avatar.textContent = initial;
-    if (label)  label.textContent  = display.split(' ')[0];
-    if (info)   info.textContent   = user.email || display;
-    btnIn?.classList.add('hidden');
-    btnOut?.classList.remove('hidden');
-    anonWarn?.classList.add('hidden');
+  const provider = window.NetPlanCloud.getProviderType();
+  const display  = user.displayName || user.email || 'Usuario';
+  const initial  = (display[0] || 'U').toUpperCase();
+
+  if (avatar) avatar.textContent = initial;
+  if (label)  label.textContent  = display.split(' ')[0];
+
+  let infoText = user.email || display;
+  if (provider === 'google')   infoText += ' · Google';
+  if (provider === 'password') infoText += ' · Email';
+  if (info) info.textContent = infoText;
+
+  /* Banner de email no verificado (solo para password, no aplica a Google) */
+  if (verify) {
+    const showVerify = provider === 'password' && !user.emailVerified;
+    verify.classList.toggle('hidden', !showVerify);
+    const emailSpan = document.getElementById('verify-email-addr');
+    if (emailSpan) emailSpan.textContent = user.email || '';
   }
 }
 
@@ -3302,46 +3657,93 @@ document.addEventListener('click', (e) => {
   }
 });
 
-async function cloudSignInWithGoogle() {
+/* Reenvío de verificación de email (desde el banner). */
+async function resendEmailVerification() {
   if (!window.NetPlanCloud?.isAvailable()) return;
-  document.getElementById('user-menu-dropdown')?.classList.add('hidden');
-
-  const modal      = document.getElementById('modal-cloud-plans');
-  const wasOpen    = modal && !modal.classList.contains('hidden');
-  if (wasOpen) modal.classList.add('hidden');
-
   try {
-    await window.NetPlanCloud.signInWithGoogle();
-    showToast('Sesión iniciada con Google', 'success');
-    if (wasOpen) openCloudPlansModal();
+    await window.NetPlanCloud.sendEmailVerification();
+    showToast('Correo de verificación reenviado', 'success');
   } catch (e) {
-    if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
-      if (wasOpen) modal.classList.remove('hidden');
-      return;
-    }
-    showToast('No se pudo iniciar sesión: ' + (e.message || e.code), 'error');
-    if (wasOpen) modal.classList.remove('hidden');
+    showToast('No se pudo reenviar: ' + (e.message || e.code), 'error');
   }
 }
 
+
+/* ── CERRAR SESIÓN ─────────────────────────────────────────── */
+
 async function cloudSignOut() {
   if (!window.NetPlanCloud?.isAvailable()) return;
-  if (!confirm('¿Cerrar sesión? Tus planes en la nube quedarán inaccesibles hasta que vuelvas a iniciar sesión con la misma cuenta.')) {
-    return;
-  }
+  if (!confirm('¿Cerrar sesión? Volverás a la pantalla de inicio.')) return;
+
   document.getElementById('user-menu-dropdown')?.classList.add('hidden');
   try {
     await window.NetPlanCloud.signOut();
     S.cloud_plan_id = null;
     showToast('Sesión cerrada', 'success');
+    /* onAuthChange recibe user=null y muestra la pantalla de login */
   } catch (e) {
     showToast('Error al cerrar sesión: ' + e.message, 'error');
   }
 }
 
+
+/* ── HELPERS DE ERROR Y VALIDACIÓN ─────────────────────────── */
+
+function isValidEmail(s) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
+
+/**
+ * Convierte códigos de Firebase Auth en mensajes legibles en español.
+ */
+function handleAuthError(e, context = '') {
+  /* Cierre/cancelación de popup: no es error, no molestar */
+  if (e.code === 'auth/popup-closed-by-user' ||
+      e.code === 'auth/cancelled-popup-request') {
+    return;
+  }
+
+  const map = {
+    'auth/popup-blocked':
+      'El navegador bloqueó el popup. Habilita popups para este sitio y vuelve a intentar.',
+    'auth/email-already-in-use':
+      'Ya existe una cuenta con ese correo. Usa "Iniciar sesión" o recupera tu contraseña.',
+    'auth/invalid-email':
+      'El correo no tiene un formato válido.',
+    'auth/user-not-found':
+      'No existe una cuenta con ese correo.',
+    'auth/wrong-password':
+      'Contraseña incorrecta.',
+    'auth/invalid-credential':
+      'Correo o contraseña incorrectos.',
+    'auth/weak-password':
+      'La contraseña es demasiado débil. Usa mínimo 8 caracteres.',
+    'auth/too-many-requests':
+      'Demasiados intentos. Espera unos minutos antes de reintentar.',
+    'auth/network-request-failed':
+      'Sin conexión a internet. Verifica tu red.',
+    'auth/operation-not-allowed':
+      'Este método de inicio de sesión no está habilitado en Firebase. Contacta al administrador.',
+    'auth/account-exists-with-different-credential':
+      'Ya existe una cuenta con ese correo usando otro método (Google o Email). Usa ese método.',
+  };
+
+  const msg = map[e.code] || e.message || e.code || 'Error desconocido';
+  showToast(msg, 'error');
+  console.error(`[Auth ${context}]`, e.code, e.message);
+}
+
+
+/* ── MODAL "MIS PLANES EN LA NUBE" ──────────────────────────── */
+
 function openCloudPlansModal() {
   if (!window.NetPlanCloud?.isAvailable()) {
     showToast('Nube no configurada', 'error');
+    return;
+  }
+  if (S.cloudless_mode || !window.NetPlanCloud.getCurrentUser()) {
+    /* No tiene sentido abrir el modal sin sesión cloud */
+    showToast('Inicia sesión para ver tus planes guardados', 'error');
     return;
   }
   document.getElementById('modal-cloud-plans')?.classList.remove('hidden');
@@ -3362,7 +3764,8 @@ async function cloudSaveCurrentPlan() {
     return;
   }
 
-  const name = document.getElementById('inp-plan-name')?.value?.trim() || S.domain || 'Plan sin título';
+  const name = document.getElementById('inp-plan-name')?.value?.trim()
+            || S.domain || 'Plan sin título';
   const planJson = buildPlanJSON();
 
   try {
@@ -3404,55 +3807,58 @@ async function refreshCloudPlansList() {
           <span class="cloud-plan-meta">${p.vlanCount} VLAN${p.vlanCount !== 1 ? 's' : ''} · ${updated}</span>
         </div>
         <div class="cloud-plan-actions">
-          <button class="btn-cloud-action" onclick="cloudLoadPlan('${p.id}')" title="Cargar este plan">↓</button>
-          <button class="btn-cloud-action btn-cloud-rename" onclick="cloudRenamePlan('${p.id}','${escapeHTML(p.name).replace(/'/g, "\\'")}')">✎</button>
-          <button class="btn-cloud-action btn-cloud-delete" onclick="cloudDeletePlan('${p.id}','${escapeHTML(p.name).replace(/'/g, "\\'")}')">✕</button>
+          <button class="btn-cloud-action" title="Cargar este plan" data-act="load" data-id="${p.id}">↓</button>
+          <button class="btn-cloud-action btn-cloud-rename" title="Renombrar" data-act="rename" data-id="${p.id}" data-name="${escapeHTML(p.name)}">✎</button>
+          <button class="btn-cloud-action btn-cloud-delete" title="Eliminar" data-act="delete" data-id="${p.id}" data-name="${escapeHTML(p.name)}">✕</button>
         </div>`;
       list.appendChild(row);
     }
+
+    /* Event delegation para los botones de acción */
+    list.querySelectorAll('.btn-cloud-action').forEach(btn => {
+      btn.addEventListener('click', () => onCloudPlanAction(btn));
+    });
   } catch (e) {
-    list.innerHTML = `<p class="placeholder-msg">Error al cargar planes: ${escapeHTML(e.message)}</p>`;
+    list.innerHTML = `<p class="placeholder-msg" style="color:var(--error)">Error: ${escapeHTML(e.message)}</p>`;
   }
 }
 
-async function cloudLoadPlan(id) {
-  if (!window.NetPlanCloud?.isAvailable()) return;
-  try {
-    const planData = await window.NetPlanCloud.loadPlan(id);
-    if (!planData) {
-      showToast('Plan no encontrado', 'error');
-      return;
+async function onCloudPlanAction(btn) {
+  const id   = btn.dataset.id;
+  const act  = btn.dataset.act;
+  const name = btn.dataset.name || '';
+
+  if (act === 'load') {
+    try {
+      const planData = await window.NetPlanCloud.loadPlan(id);
+      const result = validateAndMigratePlan(planData);
+      if (!result.ok) {
+        showToast('Plan corrupto: ' + result.error, 'error');
+        return;
+      }
+      applyPlan(result.plan);
+      S.cloud_plan_id = id;
+      closeCloudPlansModal();
+      showToast('Plan cargado desde la nube', 'success');
+    } catch (e) {
+      showToast('Error al cargar: ' + e.message, 'error');
     }
-    const result = validateAndMigratePlan(planData);
-    if (!result.ok) {
-      showToast('Plan corrupto: ' + result.error, 'error');
-      return;
+  }
+  else if (act === 'rename') {
+    const newName = prompt('Nuevo nombre del plan:', name);
+    if (newName === null) return;
+    const trimmed = newName.trim();
+    if (!trimmed) { showToast('El nombre no puede estar vacío', 'error'); return; }
+    try {
+      await window.NetPlanCloud.renamePlan(id, trimmed);
+      showToast('Plan renombrado', 'success');
+      refreshCloudPlansList();
+    } catch (e) {
+      showToast('Error al renombrar: ' + e.message, 'error');
     }
-    applyPlan(result.plan);
-    S.cloud_plan_id = id;
-    closeCloudPlansModal();
-    showToast('Plan cargado desde la nube', 'success');
-  } catch (e) {
-    showToast('Error al cargar: ' + e.message, 'error');
   }
-}
-
-async function cloudRenamePlan(id, currentName) {
-  if (!window.NetPlanCloud?.isAvailable()) return;
-  const newName = prompt('Nuevo nombre para el plan:', currentName);
-  if (!newName || newName.trim() === '' || newName.trim() === currentName) return;
-  try {
-    await window.NetPlanCloud.renamePlan(id, newName.trim());
-    showToast('Plan renombrado', 'success');
-    refreshCloudPlansList();
-  } catch (e) {
-    showToast('Error al renombrar: ' + e.message, 'error');
-  }
-}
-
-async function cloudDeletePlan(id, name) {
-  if (!window.NetPlanCloud?.isAvailable()) return;
-  if (confirm(`¿Eliminar plan "${name}"?\nEsta acción no se puede deshacer.`)) {
+  else if (act === 'delete') {
+    if (!confirm(`¿Eliminar "${name}" permanentemente?\n\nEsta acción no se puede deshacer.`)) return;
     try {
       await window.NetPlanCloud.deletePlan(id);
       if (S.cloud_plan_id === id) S.cloud_plan_id = null;
@@ -3475,5 +3881,14 @@ function escapeHTML(s) {
    ══════════════════════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
   activateStep(0);
-  checkAutosaveOnLoad();
+
+  /* Si Firebase está configurado y la nube se inicia, el flujo
+     queda en manos del listener 'netplan-cloud-ready'.
+     Si Firebase NO se configura (timeout o no cargado), pasamos
+     a modo sin nube como fallback después de 1.5s. */
+  setTimeout(() => {
+    if (!_authDecisionMade && !window.NetPlanCloud?.isAvailable()) {
+      enterCloudlessMode({ silent: true, persist: false });
+    }
+  }, 1500);
 });

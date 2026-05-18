@@ -1,6 +1,21 @@
 /*
  * ╔══════════════════════════════════════════════════════════════╗
- * ║  NetPlan Pro v4.0 — firebase-cloud.js                        ║
+ * ║  NetPlan Pro v4.7 — firebase-cloud.js                        ║
+ * ║                                                              ║
+ * ║  Cambios v4.7 (Bloque A — Auth y persistencia):              ║
+ * ║   · Solo 2 métodos de autenticación: Google y Email/Password ║
+ * ║   · ELIMINADO: usuario anónimo (signInAnonymously) y toda la ║
+ * ║     lógica de migración anónimo→cuenta. Resuelve de raíz los ║
+ * ║     bugs de autoguardado huérfano, doble popup y anónimos    ║
+ * ║     acumulados.                                              ║
+ * ║   · Email/contraseña: signUp, signIn, sendPasswordReset      ║
+ * ║   · Persistencia configurable (local vs sesión) ANTES del    ║
+ * ║     sign-in según toggle "Mantener sesión" del login         ║
+ * ║   · NO crea sesión automática al cargar. Si hay sesión       ║
+ * ║     persistida (Google/email con persistencia local), se     ║
+ * ║     recupera; si no, el usuario ve la pantalla de login.     ║
+ * ║   · El "modo sin nube" lo gestiona script.js sin tocar       ║
+ * ║     Firebase — esta capa solo conoce sesiones reales.        ║
  * ║                                                              ║
  * ║  Módulo (ES Module) que encapsula toda la integración con    ║
  * ║  Firebase. Se carga con <script type="module"> y expone la   ║
@@ -15,8 +30,19 @@
 import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js';
 import {
-  getAuth, signInAnonymously, signInWithPopup, GoogleAuthProvider,
-  signOut, onAuthStateChanged, linkWithPopup,
+  getAuth,
+  signInWithPopup,
+  GoogleAuthProvider,
+  signOut,
+  onAuthStateChanged,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  sendEmailVerification,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
+  fetchSignInMethodsForEmail,
 } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js';
 import {
   getFirestore, collection, doc, setDoc, getDoc, getDocs, deleteDoc,
@@ -28,6 +54,11 @@ import { firebaseConfig } from './firebase-config.js';
 /* ── Estado interno del módulo ─────────────────────────────── */
 let _app = null, _auth = null, _db = null, _currentUser = null;
 const _authCallbacks = [];
+
+/* Flag que indica si _init() ya terminó y emitió al menos un estado.
+ * Permite a la pantalla de login esperar antes de mostrarse, evitando
+ * un parpadeo cuando hay sesión persistida que se va a recuperar. */
+let _initEmitted = false;
 
 /* ── Helpers ───────────────────────────────────────────────── */
 
@@ -47,13 +78,33 @@ function _isConfigured() {
 
 /** Notifica a los suscriptores de cambios de auth. */
 function _emitAuthChange(user) {
-  _currentUser = user;
+  _currentUser  = user;
+  _initEmitted  = true;
   _authCallbacks.forEach(cb => {
     try { cb(user); } catch (e) { console.error('[NetPlanCloud] callback error:', e); }
   });
 }
 
-/** Inicializa Firebase si está configurado. Retorna true/false. */
+/**
+ * Determina el tipo de proveedor del usuario actual.
+ * Retorna: 'google' | 'password' | null
+ */
+function _getProviderType(user) {
+  if (!user) return null;
+  const providers = user.providerData || [];
+  if (providers.some(p => p.providerId === 'google.com')) return 'google';
+  if (providers.some(p => p.providerId === 'password'))   return 'password';
+  return 'unknown';
+}
+
+/**
+ * Inicializa Firebase si está configurado. Retorna true/false.
+ *
+ * v4.7: ya NO crea sesión anónima automática. La pantalla de login
+ *       le pide al usuario que elija método.
+ *       Si el usuario tenía sesión persistida (Google/email con
+ *       "Mantener sesión" ON), onAuthStateChanged la recupera.
+ */
 async function _init() {
   if (!_isConfigured()) {
     console.info(
@@ -78,17 +129,33 @@ async function _init() {
       console.warn(`[NetPlanCloud] Persistencia offline no activada (${reason})`);
     });
 
-    /* Suscripción al estado de auth */
+    /* Suscripción al estado de auth.
+     * Si hay sesión persistida, dispara con el usuario.
+     * Si no hay sesión, dispara con null. */
     onAuthStateChanged(_auth, _emitAuthChange);
 
-    /* Auto sign-in anónimo: el usuario puede usar la nube sin registrarse */
-    if (!_auth.currentUser) {
-      await signInAnonymously(_auth);
-    }
     return true;
   } catch (e) {
     console.error('[NetPlanCloud] Error de inicialización:', e);
     return false;
+  }
+}
+
+/**
+ * Aplica el modo de persistencia ANTES de cualquier sign-in.
+ * Debe llamarse desde la pantalla de login según el toggle "Mantener sesión".
+ *
+ * @param {boolean} remember - true = browserLocalPersistence (persiste tras cerrar
+ *                              navegador), false = browserSessionPersistence
+ *                              (solo durante la pestaña).
+ */
+async function _applyPersistence(remember) {
+  if (!_auth) return;
+  const mode = remember ? browserLocalPersistence : browserSessionPersistence;
+  try {
+    await setPersistence(_auth, mode);
+  } catch (e) {
+    console.warn('[NetPlanCloud] No se pudo aplicar persistencia:', e.code);
   }
 }
 
@@ -101,58 +168,119 @@ const NetPlanCloud = {
   /** ¿La nube está configurada y funcionando? */
   isAvailable: () => _app !== null,
 
+  /** ¿_init() ya emitió al menos un estado? Útil para esperar antes de mostrar login. */
+  hasInitEmitted: () => _initEmitted,
+
   /**
    * Registra un callback para cambios de auth.
    * Se llama inmediatamente con el estado actual si ya se conoce.
    */
   onAuthStateChanged(callback) {
     _authCallbacks.push(callback);
-    if (_currentUser !== null) callback(_currentUser);
+    /* Si ya emitimos al menos un evento, replicamos el último estado
+       al nuevo suscriptor. _currentUser puede ser null (sin sesión)
+       o un objeto User. Ambos son válidos. */
+    if (_initEmitted) callback(_currentUser);
   },
 
   /** Devuelve el usuario actual (o null). */
   getCurrentUser: () => _currentUser,
 
   /**
+   * Devuelve el tipo de proveedor: 'google' | 'password' | null
+   * Útil para mostrar en la UI el método de auth usado.
+   */
+  getProviderType: () => _getProviderType(_currentUser),
+
+  /**
+   * Aplica persistencia ANTES de cualquier sign-in.
+   * @param {boolean} remember - true: persiste tras cerrar; false: solo en pestaña
+   */
+  setRememberSession(remember) {
+    return _applyPersistence(remember);
+  },
+
+  /**
    * Inicia sesión con Google.
-   * Si el usuario actual es anónimo, intenta vincular su cuenta para
-   * preservar los planes ya guardados (linkWithPopup). Si el email
-   * de Google ya tiene una cuenta Firebase, hace sign-in normal y
-   * los planes anónimos quedan inaccesibles desde la nueva cuenta.
+   * Un solo popup. Si el popup es bloqueado o cerrado, lanza el error
+   * correspondiente para que la UI lo maneje.
    */
   async signInWithGoogle() {
     if (!_auth) throw new Error('Cloud no disponible');
     const provider = new GoogleAuthProvider();
-
-    if (_currentUser?.isAnonymous) {
-      try {
-        const result = await linkWithPopup(_currentUser, provider);
-        return result.user;
-      } catch (e) {
-        if (e.code === 'auth/credential-already-in-use' ||
-            e.code === 'auth/email-already-in-use') {
-          /* La cuenta Google ya existe en Firebase.
-             Hacemos sign-in normal — los planes anónimos quedan en
-             el UID anónimo (huérfanos). El usuario puede importarlos
-             desde el JSON local si los necesita. */
-          const result = await signInWithPopup(_auth, provider);
-          return result.user;
-        }
-        throw e;
-      }
-    }
     const result = await signInWithPopup(_auth, provider);
     return result.user;
   },
 
   /**
-   * Cierra sesión y vuelve a iniciar sesión anónima inmediatamente,
-   * para que el usuario pueda seguir usando la app sin registrarse.
+   * Registra una nueva cuenta con email + password.
+   * Firebase requiere password de mínimo 6 caracteres (configurable).
+   * La validación adicional (mínimo 8, complejidad, etc.) la hace la UI.
+   */
+  async signUpWithEmail(email, password) {
+    if (!_auth) throw new Error('Cloud no disponible');
+    if (!email || !password) throw new Error('Email y contraseña requeridos');
+    const result = await createUserWithEmailAndPassword(_auth, email, password);
+    return result.user;
+  },
+
+  /**
+   * Inicia sesión con email + password ya existente.
+   */
+  async signInWithEmail(email, password) {
+    if (!_auth) throw new Error('Cloud no disponible');
+    if (!email || !password) throw new Error('Email y contraseña requeridos');
+    const result = await signInWithEmailAndPassword(_auth, email, password);
+    return result.user;
+  },
+
+  /**
+   * Envía un email de restablecimiento de contraseña.
+   * Firebase envía el correo solo si la cuenta existe; por seguridad,
+   * no informamos al cliente si el email existe o no.
+   */
+  async sendPasswordReset(email) {
+    if (!_auth) throw new Error('Cloud no disponible');
+    if (!email) throw new Error('Email requerido');
+    await sendPasswordResetEmail(_auth, email);
+  },
+
+  /**
+   * Envía un email de verificación al usuario actual.
+   * Solo aplica a cuentas password con email no verificado.
+   * Si el usuario no existe o ya está verificado, lanza error.
+   */
+  async sendEmailVerification() {
+    if (!_auth || !_currentUser) throw new Error('No hay usuario activo');
+    if (_currentUser.emailVerified) {
+      throw new Error('El correo ya está verificado');
+    }
+    await sendEmailVerification(_currentUser);
+  },
+
+  /**
+   * Verifica los métodos de sign-in registrados para un email.
+   * Devuelve un array como ['google.com'], ['password'], ambos, o [].
+   * Útil para que la UI sugiera "esta cuenta usa Google" cuando el
+   * usuario intenta crear cuenta con un email que ya tiene Google.
+   */
+  async getSignInMethodsForEmail(email) {
+    if (!_auth) throw new Error('Cloud no disponible');
+    try {
+      return await fetchSignInMethodsForEmail(_auth, email);
+    } catch (e) {
+      return [];
+    }
+  },
+
+  /**
+   * Cierra sesión.
+   * v4.7: ya no crea anónimo automático al cerrar. El usuario vuelve
+   *       a la pantalla de login y decide.
    */
   async signOut() {
     if (!_auth) return;
     await signOut(_auth);
-    await signInAnonymously(_auth);
   },
 
   /**
