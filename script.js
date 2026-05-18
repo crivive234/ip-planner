@@ -3278,301 +3278,106 @@ function discardAutosave() {
 
 
 
-
 /* ══════════════════════════════════════════════════════════════
-   18. NUBE — UI Y HANDLERS DE FIREBASE (v4.7 — Bloque A)
+   18. NUBE — UI POST-LOGIN (v4.7 — Bloque A refactor)
    ══════════════════════════════════════════════════════════════
-   Toda la lógica Firebase vive en firebase-cloud.js (módulo ES6).
-   Aquí solo se invoca la API expuesta en window.NetPlanCloud.
+   Toda la lógica de AUTH (login, signup, forgot, modo sin nube
+   entry) vive en login.js + login.html. Esta sección solo
+   maneja la app YA LOGUEADA o en modo sin nube:
 
-   Cambios v4.7:
-   - Pantalla de login obligatoria al cargar (Google / Email / Sin nube)
-   - Manejo de 3 modales auth: signup, signin, forgot password
-   - Toggle "Mantener sesión" aplica persistencia antes del sign-in
-   - Banner de email no verificado (no bloqueante)
-   - Banner discreto en modo sin nube
-   - Botón "Iniciar sesión" en header cuando está en modo sin nube
+   - Decide si redirigir a login.html cuando no hay sesión
+   - Mantiene el menú de usuario sincronizado con el user actual
+   - Banner de email no verificado
+   - Modal "Mis planes en la nube"
+   - Cerrar sesión
+   - Salida de modo sin nube → redirige a login.html
    ══════════════════════════════════════════════════════════════ */
 
-/* Flag: ya hemos decidido qué pantalla mostrar (login vs wizard).
- * Evita parpadeo y re-renders en cargas con sesión persistida. */
-let _authDecisionMade = false;
+const LOGIN_URL = 'login.html';
+
+/* Flag: ya decidimos qué mostrar (wizard o redirección).
+ * Evita race conditions con onAuthStateChanged. */
+let _appInitialized = false;
 
 window.addEventListener('netplan-cloud-ready', (e) => {
   if (!e.detail?.available) {
-    /* Firebase no configurado → entrar directamente al wizard en
-       modo sin nube de facto. No mostramos login porque no hay cloud
-       que ofrecer. */
-    enterCloudlessMode({ silent: true, persist: false });
+    /* Firebase no configurado → modo sin nube de facto, sin redirect */
+    enterCloudlessModeUI({ silent: true, persist: false });
     return;
   }
 
   document.body.classList.add('cloud-ready');
 
-  /* Si el usuario eligió "modo sin nube" antes, respetar esa decisión.
-     No mostrar pantalla de login. */
+  /* Si el usuario eligió modo sin nube previamente, respetarlo */
   if (localStorage.getItem(CLOUDLESS_FLAG) === 'true') {
-    enterCloudlessMode({ silent: true, persist: false });
+    enterCloudlessModeUI({ silent: true, persist: false });
     return;
   }
 
-  /* Suscribirse a cambios de auth. El primer evento determina si
-     mostramos login (user=null) o vamos directo al wizard (user). */
+  /* Suscribirse a auth state. El primer evento decide:
+     - hay user → mostrar wizard
+     - no hay user → redirigir a login.html */
   window.NetPlanCloud.onAuthStateChanged(onAuthChange);
 });
 
 function onAuthChange(user) {
   if (user) {
-    /* Hay sesión activa (recuperada de persistencia o recién creada).
+    /* Hay sesión (recuperada de persistencia o recién creada).
        Mostrar wizard. */
-    _authDecisionMade = true;
-    hideLoginScreen();
-    updateUserMenuUI(user);
-    /* Re-leer autoguardado bajo la NUEVA clave (por UID).
-       El plan anterior queda intacto en su clave; este usuario verá el suyo. */
-    checkAutosaveOnLoad();
-  } else {
-    /* Sin sesión. Mostrar pantalla de login. */
-    if (!_authDecisionMade) showLoginScreen();
-    /* Si _authDecisionMade ya es true, es porque el usuario hizo
-       signOut. Lo redirigimos al login también. */
-    if (_authDecisionMade) showLoginScreen();
-  }
-}
-
-
-/* ── PANTALLA DE LOGIN ────────────────────────────────────── */
-
-function showLoginScreen() {
-  const overlay = document.getElementById('login-overlay');
-  if (overlay) overlay.classList.remove('hidden');
-  /* Por seguridad, ocultar todos los modales que pudieran estar abiertos */
-  document.getElementById('modal-cloud-plans')?.classList.add('hidden');
-  document.getElementById('modal-finish')?.classList.add('hidden');
-  document.getElementById('modal-email-signup')?.classList.add('hidden');
-  document.getElementById('modal-email-signin')?.classList.add('hidden');
-  document.getElementById('modal-forgot-password')?.classList.add('hidden');
-}
-
-function hideLoginScreen() {
-  const overlay = document.getElementById('login-overlay');
-  if (overlay) overlay.classList.add('hidden');
-  _authDecisionMade = true;
-}
-
-/* Toggle "Mantener sesión" — aplica persistencia. */
-function onRememberToggle(cb) {
-  if (window.NetPlanCloud?.isAvailable()) {
-    window.NetPlanCloud.setRememberSession(cb.checked);
-  }
-}
-
-
-/* ── BOTÓN GOOGLE EN PANTALLA DE LOGIN ─────────────────────── */
-
-async function loginWithGoogle() {
-  if (!window.NetPlanCloud?.isAvailable()) {
-    showToast('Nube no disponible', 'error');
-    return;
-  }
-  /* Aplicar persistencia según toggle ANTES del sign-in */
-  const remember = document.getElementById('chk-remember-session')?.checked ?? true;
-  await window.NetPlanCloud.setRememberSession(remember);
-
-  try {
-    await window.NetPlanCloud.signInWithGoogle();
-    /* hideLoginScreen() se llama desde onAuthChange cuando llegue el evento */
-    showToast('Sesión iniciada con Google', 'success');
-  } catch (e) {
-    handleAuthError(e, 'Google');
-  }
-}
-
-
-/* ── BOTÓN EMAIL EN PANTALLA DE LOGIN ──────────────────────── */
-
-function openEmailSigninModal() {
-  document.getElementById('modal-email-signin')?.classList.remove('hidden');
-  /* Limpiar campos */
-  const inpE = document.getElementById('inp-signin-email');
-  const inpP = document.getElementById('inp-signin-password');
-  if (inpE) inpE.value = '';
-  if (inpP) inpP.value = '';
-  document.getElementById('field-signin-email')?.classList.remove('invalid');
-  document.getElementById('field-signin-password')?.classList.remove('invalid');
-  document.getElementById('btn-do-signin').disabled = true;
-  setTimeout(() => inpE?.focus(), 100);
-}
-
-function closeEmailSigninModal() {
-  document.getElementById('modal-email-signin')?.classList.add('hidden');
-}
-
-function validateSigninForm() {
-  const email = document.getElementById('inp-signin-email')?.value.trim() || '';
-  const pwd   = document.getElementById('inp-signin-password')?.value || '';
-  const ok    = isValidEmail(email) && pwd.length >= 6;
-  document.getElementById('btn-do-signin').disabled = !ok;
-}
-
-async function doEmailSignin() {
-  const email = document.getElementById('inp-signin-email')?.value.trim() || '';
-  const pwd   = document.getElementById('inp-signin-password')?.value || '';
-  if (!isValidEmail(email) || pwd.length < 6) return;
-
-  const remember = document.getElementById('chk-remember-session')?.checked ?? true;
-  await window.NetPlanCloud.setRememberSession(remember);
-
-  const btn = document.getElementById('btn-do-signin');
-  if (btn) { btn.disabled = true; btn.textContent = 'Verificando…'; }
-
-  try {
-    await window.NetPlanCloud.signInWithEmail(email, pwd);
-    closeEmailSigninModal();
-    showToast('Sesión iniciada', 'success');
-  } catch (e) {
-    handleAuthError(e, 'Email');
-    if (btn) { btn.disabled = false; btn.textContent = 'Iniciar sesión'; }
-  }
-}
-
-
-/* ── BOTÓN CREAR CUENTA ─────────────────────────────────────── */
-
-function openEmailSignupModal() {
-  closeEmailSigninModal();
-  document.getElementById('modal-email-signup')?.classList.remove('hidden');
-  /* Limpiar campos */
-  ['inp-signup-email','inp-signup-password','inp-signup-password-confirm'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.value = '';
-  });
-  ['field-signup-email','field-signup-password','field-signup-password-confirm'].forEach(id => {
-    document.getElementById(id)?.classList.remove('invalid');
-  });
-  document.getElementById('btn-do-signup').disabled = true;
-  setTimeout(() => document.getElementById('inp-signup-email')?.focus(), 100);
-}
-
-function closeEmailSignupModal() {
-  document.getElementById('modal-email-signup')?.classList.add('hidden');
-}
-
-function validateSignupForm() {
-  const email = document.getElementById('inp-signup-email')?.value.trim() || '';
-  const pwd   = document.getElementById('inp-signup-password')?.value || '';
-  const pwd2  = document.getElementById('inp-signup-password-confirm')?.value || '';
-
-  const emailOk = isValidEmail(email);
-  const pwdOk   = pwd.length >= 8;
-  const match   = pwd === pwd2 && pwd2.length > 0;
-
-  /* Solo marcar inválido si el campo no está vacío (UX más amable) */
-  setFieldValidity('field-signup-email',           emailOk || email === '');
-  setFieldValidity('field-signup-password',        pwdOk   || pwd === '');
-  setFieldValidity('field-signup-password-confirm', match  || pwd2 === '');
-
-  document.getElementById('btn-do-signup').disabled = !(emailOk && pwdOk && match);
-}
-
-async function doEmailSignup() {
-  const email = document.getElementById('inp-signup-email')?.value.trim() || '';
-  const pwd   = document.getElementById('inp-signup-password')?.value || '';
-  const pwd2  = document.getElementById('inp-signup-password-confirm')?.value || '';
-
-  if (!isValidEmail(email) || pwd.length < 8 || pwd !== pwd2) return;
-
-  const remember = document.getElementById('chk-remember-session')?.checked ?? true;
-  await window.NetPlanCloud.setRememberSession(remember);
-
-  const btn = document.getElementById('btn-do-signup');
-  if (btn) { btn.disabled = true; btn.textContent = 'Creando cuenta…'; }
-
-  try {
-    const user = await window.NetPlanCloud.signUpWithEmail(email, pwd);
-    /* Enviar email de verificación opcional (no bloqueante) */
-    if (user && !user.emailVerified) {
-      try {
-        await window.NetPlanCloud.sendEmailVerification();
-      } catch(_) { /* no crítico */ }
+    if (!_appInitialized) {
+      _appInitialized = true;
+      checkAutosaveOnLoad();
     }
-    closeEmailSignupModal();
-    showToast('Cuenta creada. Revisa tu correo para verificarla.', 'success');
-  } catch (e) {
-    handleAuthError(e, 'Crear cuenta');
-    if (btn) { btn.disabled = false; btn.textContent = 'Crear cuenta'; }
+    updateUserMenuUI(user);
+  } else {
+    /* No hay sesión y NO estamos en modo sin nube → ir a login */
+    if (!S.cloudless_mode) {
+      redirectToLogin();
+    }
   }
 }
 
-
-/* ── OLVIDÉ MI CONTRASEÑA ──────────────────────────────────── */
-
-function openForgotPasswordModal() {
-  closeEmailSigninModal();
-  document.getElementById('modal-forgot-password')?.classList.remove('hidden');
-  const inp = document.getElementById('inp-forgot-email');
-  if (inp) inp.value = '';
-  document.getElementById('field-forgot-email')?.classList.remove('invalid');
-  document.getElementById('btn-do-forgot').disabled = true;
-  setTimeout(() => inp?.focus(), 100);
-}
-
-function closeForgotPasswordModal() {
-  document.getElementById('modal-forgot-password')?.classList.add('hidden');
-}
-
-function validateForgotForm() {
-  const email = document.getElementById('inp-forgot-email')?.value.trim() || '';
-  document.getElementById('btn-do-forgot').disabled = !isValidEmail(email);
-}
-
-async function doSendPasswordReset() {
-  const email = document.getElementById('inp-forgot-email')?.value.trim() || '';
-  if (!isValidEmail(email)) return;
-
-  const btn = document.getElementById('btn-do-forgot');
-  if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
-
-  try {
-    await window.NetPlanCloud.sendPasswordReset(email);
-    closeForgotPasswordModal();
-    showToast(
-      'Si esa cuenta existe, te enviamos un correo con instrucciones.',
-      'success'
-    );
-  } catch (e) {
-    handleAuthError(e, 'Reset');
-    if (btn) { btn.disabled = false; btn.textContent = 'Enviar enlace'; }
-  }
+function redirectToLogin() {
+  /* replace() para no agregar al historial. Si el usuario hace
+     "atrás" después de loguearse, no vuelve aquí en blanco. */
+  window.location.replace(LOGIN_URL);
 }
 
 
-/* ── MODO SIN NUBE ──────────────────────────────────────────── */
+/* ── MODO SIN NUBE — solo aspectos de UI dentro del wizard ──── */
 
 /**
- * Activa el modo sin nube: oculta login, muestra wizard y banner discreto.
+ * Activa la UI de modo sin nube: agrega clase al body, muestra
+ * banner discreto, lee autoguardado local.
+ *
+ * NOTA: la decisión de ENTRAR a modo sin nube se toma en login.html
+ *       (botón "Usar sin nube"). Esta función solo aplica los
+ *       efectos visuales una vez ya en index.html.
  *
  * @param {Object} opts
- * @param {boolean} opts.silent  - true: no muestra toast (uso interno al cargar)
- * @param {boolean} opts.persist - true: guarda flag en localStorage para futuras cargas
+ * @param {boolean} opts.silent  - no muestra toast
+ * @param {boolean} opts.persist - guarda flag en localStorage
  */
-function enterCloudlessMode({ silent = false, persist = true } = {}) {
+function enterCloudlessModeUI({ silent = false, persist = true } = {}) {
   S.cloudless_mode = true;
   if (persist) {
     try { localStorage.setItem(CLOUDLESS_FLAG, 'true'); } catch(_) {}
   }
-  hideLoginScreen();
   document.body.classList.add('cloudless-mode');
   document.getElementById('cloudless-banner')?.classList.remove('hidden');
-  checkAutosaveOnLoad();
+  if (!_appInitialized) {
+    _appInitialized = true;
+    checkAutosaveOnLoad();
+  }
   if (!silent) showToast('Modo sin nube activado', 'success');
 }
 
 /**
- * Sale del modo sin nube y vuelve a mostrar la pantalla de login.
- * Si hay un plan actual con contenido, pregunta si conservarlo.
+ * Handler del botón "Iniciar sesión" del header (visible solo en
+ * modo sin nube). Pregunta si conservar el plan actual y luego
+ * redirige a login.html.
  */
-function exitCloudlessMode() {
+function goToLoginFromCloudless() {
   const hasContent = S.hosts_piso && S.vlan_defs.length > 0;
 
   if (hasContent) {
@@ -3583,34 +3388,14 @@ function exitCloudlessMode() {
       '• Cancelar: se descarta el plan y empezarás vacío.'
     );
     if (!keep) {
-      /* Limpiar autoguardado local y plan en memoria */
+      /* Limpiar autoguardado local */
       try { localStorage.removeItem(_autosaveKey()); } catch(_) {}
-      resetPlanState();
     }
   }
 
-  S.cloudless_mode = false;
+  /* Quitar flag de modo sin nube y redirigir a login */
   try { localStorage.removeItem(CLOUDLESS_FLAG); } catch(_) {}
-  document.body.classList.remove('cloudless-mode');
-  document.getElementById('cloudless-banner')?.classList.add('hidden');
-  showLoginScreen();
-}
-
-/**
- * Resetea el plan en memoria pero sin tocar localStorage ni mostrar toast.
- * Helper de exitCloudlessMode cuando el usuario decide no conservar.
- */
-function resetPlanState() {
-  S.pisos = 3; S.core_piso = 1; S.hosts_piso = null;
-  S.puertos = 48; S.redundancia = 'single'; S.vendor = 'cisco';
-  S.growth_factor = 2; S.hardening_l2 = true;
-  S.net = null; S.override = '';
-  S.dns4 = '8.8.8.8'; S.dns6 = '2001:4860:4860::8888';
-  S.ntp = 'pool.ntp.org'; S.domain = 'corp.local';
-  S.ipv6 = true; S.wan_nexthop = ''; S.wan_routes = [];
-  S.vlan_defs = []; S.vlans = []; S.ula_prefix = '';
-  S.cloud_plan_id = null;
-  S.vlan_edit_id = null; S.reserve_expanded = {};
+  redirectToLogin();
 }
 
 
@@ -3635,7 +3420,7 @@ function updateUserMenuUI(user) {
   if (provider === 'password') infoText += ' · Email';
   if (info) info.textContent = infoText;
 
-  /* Banner de email no verificado (solo para password, no aplica a Google) */
+  /* Banner de email no verificado (solo cuenta password sin verificar) */
   if (verify) {
     const showVerify = provider === 'password' && !user.emailVerified;
     verify.classList.toggle('hidden', !showVerify);
@@ -3657,7 +3442,7 @@ document.addEventListener('click', (e) => {
   }
 });
 
-/* Reenvío de verificación de email (desde el banner). */
+/* Reenvío de verificación de email (desde el banner amarillo). */
 async function resendEmailVerification() {
   if (!window.NetPlanCloud?.isAvailable()) return;
   try {
@@ -3679,58 +3464,18 @@ async function cloudSignOut() {
   try {
     await window.NetPlanCloud.signOut();
     S.cloud_plan_id = null;
-    showToast('Sesión cerrada', 'success');
-    /* onAuthChange recibe user=null y muestra la pantalla de login */
+    /* onAuthChange recibirá user=null y redirigirá a login.html */
   } catch (e) {
     showToast('Error al cerrar sesión: ' + e.message, 'error');
   }
 }
 
 
-/* ── HELPERS DE ERROR Y VALIDACIÓN ─────────────────────────── */
+/* ── HELPER ────────────────────────────────────────────────── */
 
-function isValidEmail(s) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
-}
-
-/**
- * Convierte códigos de Firebase Auth en mensajes legibles en español.
- */
-function handleAuthError(e, context = '') {
-  /* Cierre/cancelación de popup: no es error, no molestar */
-  if (e.code === 'auth/popup-closed-by-user' ||
-      e.code === 'auth/cancelled-popup-request') {
-    return;
-  }
-
-  const map = {
-    'auth/popup-blocked':
-      'El navegador bloqueó el popup. Habilita popups para este sitio y vuelve a intentar.',
-    'auth/email-already-in-use':
-      'Ya existe una cuenta con ese correo. Usa "Iniciar sesión" o recupera tu contraseña.',
-    'auth/invalid-email':
-      'El correo no tiene un formato válido.',
-    'auth/user-not-found':
-      'No existe una cuenta con ese correo.',
-    'auth/wrong-password':
-      'Contraseña incorrecta.',
-    'auth/invalid-credential':
-      'Correo o contraseña incorrectos.',
-    'auth/weak-password':
-      'La contraseña es demasiado débil. Usa mínimo 8 caracteres.',
-    'auth/too-many-requests':
-      'Demasiados intentos. Espera unos minutos antes de reintentar.',
-    'auth/network-request-failed':
-      'Sin conexión a internet. Verifica tu red.',
-    'auth/operation-not-allowed':
-      'Este método de inicio de sesión no está habilitado en Firebase. Contacta al administrador.',
-    'auth/account-exists-with-different-credential':
-      'Ya existe una cuenta con ese correo usando otro método (Google o Email). Usa ese método.',
-  };
-
-  const msg = map[e.code] || e.message || e.code || 'Error desconocido';
-  showToast(msg, 'error');
-  console.error(`[Auth ${context}]`, e.code, e.message);
+function escapeHTML(s) {
+  return String(s ?? '').replace(/[&<>"']/g,
+    c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
 
@@ -3742,7 +3487,6 @@ function openCloudPlansModal() {
     return;
   }
   if (S.cloudless_mode || !window.NetPlanCloud.getCurrentUser()) {
-    /* No tiene sentido abrir el modal sin sesión cloud */
     showToast('Inicia sesión para ver tus planes guardados', 'error');
     return;
   }
@@ -3870,11 +3614,6 @@ async function onCloudPlanAction(btn) {
   }
 }
 
-function escapeHTML(s) {
-  return String(s ?? '').replace(/[&<>"']/g,
-    c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
-}
-
 
 /* ══════════════════════════════════════════════════════════════
    19. INICIALIZACIÓN
@@ -3882,13 +3621,11 @@ function escapeHTML(s) {
 document.addEventListener('DOMContentLoaded', () => {
   activateStep(0);
 
-  /* Si Firebase está configurado y la nube se inicia, el flujo
-     queda en manos del listener 'netplan-cloud-ready'.
-     Si Firebase NO se configura (timeout o no cargado), pasamos
-     a modo sin nube como fallback después de 1.5s. */
+  /* Fallback: si después de 2s no se ha decidido nada (Firebase no
+     cargó por cualquier razón), entrar en modo sin nube. */
   setTimeout(() => {
-    if (!_authDecisionMade && !window.NetPlanCloud?.isAvailable()) {
-      enterCloudlessMode({ silent: true, persist: false });
+    if (!_appInitialized && !window.NetPlanCloud?.isAvailable()) {
+      enterCloudlessModeUI({ silent: true, persist: false });
     }
-  }, 1500);
+  }, 2000);
 });

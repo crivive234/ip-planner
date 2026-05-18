@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NetPlan Pro v4.7 — Iniciar sesión</title>
+  <!--
+  ┌─────────────────────────────────────────────────────────────┐
+  │  NetPlan Pro v4.7 — login.html                              │
+  │  Página independiente de autenticación.                     │
+  │                                                             │
+  │  Flujo:                                                     │
+  │   - Sin sesión → muestra UI de login                        │
+  │   - Sesión activa → redirige a index.html (replace)         │
+  │   - Firebase no configurado → redirige a index.html         │
+  │   - Modo sin nube elegido → redirige a index.html           │
+  └─────────────────────────────────────────────────────────────┘
+  -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="login-body">
+
+  <!-- ══════════════════════════════════════════════════════════
+       PANTALLA DE LOGIN — overlay full-screen
+       ══════════════════════════════════════════════════════════ -->
+  <div class="login-overlay" id="login-overlay" role="dialog" aria-modal="true" aria-labelledby="login-title">
+    <div class="login-card">
+
+      <!-- Branding -->
+      <div class="login-brand">
+        <span class="login-logo">NET<span>PLAN</span></span>
+        <span class="login-version">v4.7</span>
+      </div>
+
+      <h1 class="login-title" id="login-title">Bienvenido a NetPlan Pro</h1>
+      <p class="login-tagline">
+        Planificación automática de redes WAN/LAN Dual-Stack para Cisco y Huawei.
+        VLSM, VLANs, configuraciones por dispositivo y topología — todo en un asistente paso a paso.
+      </p>
+
+      <!-- Aviso de popups -->
+      <div class="login-popup-warning" role="status">
+        <span class="login-popup-warning-icon">⚠</span>
+        <div class="login-popup-warning-text">
+          <strong>Atención:</strong> el inicio de sesión con Google abre una ventana emergente.
+          Si tu navegador bloquea popups, habilítalos para este sitio antes de continuar.
+        </div>
+      </div>
+
+      <!-- Botones de método de autenticación -->
+      <div class="login-methods">
+        <button class="login-btn login-btn-google" type="button" onclick="loginWithGoogle()">
+          <span class="login-btn-icon">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path fill="#4285F4" d="M21.6 12.2c0-.7-.1-1.3-.2-2H12v3.8h5.4c-.2 1.2-.9 2.3-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.3z"/>
+              <path fill="#34A853" d="M12 22c2.7 0 5-.9 6.6-2.5l-3.2-2.5c-.9.6-2 1-3.4 1-2.6 0-4.8-1.8-5.6-4.1H3.1v2.6C4.7 19.7 8.1 22 12 22z"/>
+              <path fill="#FBBC05" d="M6.4 13.9c-.2-.6-.3-1.3-.3-1.9s.1-1.3.3-1.9V7.5H3.1C2.4 8.9 2 10.4 2 12s.4 3.1 1.1 4.5l3.3-2.6z"/>
+              <path fill="#EA4335" d="M12 6.1c1.5 0 2.8.5 3.8 1.5l2.8-2.8C16.9 3.2 14.7 2.3 12 2.3 8.1 2.3 4.7 4.6 3.1 7.5l3.3 2.5C7.2 7.9 9.4 6.1 12 6.1z"/>
+            </svg>
+          </span>
+          <span class="login-btn-label">Iniciar sesión con Google</span>
+        </button>
+
+        <button class="login-btn login-btn-email" type="button" onclick="openEmailSigninModal()">
+          <span class="login-btn-icon">✉</span>
+          <span class="login-btn-label">Iniciar sesión con email</span>
+        </button>
+      </div>
+
+      <!-- Toggle "Mantener sesión" -->
+      <div class="login-remember">
+        <label class="login-remember-row">
+          <input type="checkbox" id="chk-remember-session" checked onchange="onRememberToggle(this)" />
+          <span class="login-remember-text">
+            <strong>Mantener sesión iniciada</strong>
+            <span class="login-remember-sub">Si lo desactivas, deberás iniciar sesión cada vez que cierres el navegador.</span>
+          </span>
+        </label>
+      </div>
+
+      <!-- Links: crear cuenta -->
+      <div class="login-extras">
+        <span class="login-extra-text">¿No tienes cuenta?</span>
+        <button class="login-link" type="button" onclick="openEmailSignupModal()">
+          Crear cuenta con email
+        </button>
+      </div>
+
+      <div class="login-divider"><span>o</span></div>
+
+      <!-- Modo sin nube -->
+      <button class="login-link login-link-cloudless" type="button" onclick="enterCloudlessMode()">
+        Usar sin nube (solo en este navegador)
+      </button>
+      <p class="login-cloudless-note">
+        Tus planes no se guardarán en la nube. Solo existirán en este navegador.
+        Podrás exportarlos como JSON.
+      </p>
+
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════════════════════
+       MODAL: Iniciar sesión con email
+       ══════════════════════════════════════════════════════════ -->
+  <div class="modal-overlay hidden" id="modal-email-signin">
+    <div class="modal modal-auth">
+      <div class="modal-header">
+        <h3 class="modal-title">✉ Iniciar sesión</h3>
+        <button class="modal-close" type="button" onclick="closeEmailSigninModal()" aria-label="Cerrar">✕</button>
+      </div>
+
+      <form onsubmit="doEmailSignin(); return false;">
+        <div class="field" id="field-signin-email">
+          <label for="inp-signin-email">Correo electrónico</label>
+          <input type="email" id="inp-signin-email" autocomplete="email"
+                 placeholder="tu@correo.com"
+                 oninput="validateSigninForm()" required />
+          <span class="field-error">Correo inválido</span>
+        </div>
+
+        <div class="field" id="field-signin-password">
+          <label for="inp-signin-password">Contraseña</label>
+          <input type="password" id="inp-signin-password" autocomplete="current-password"
+                 placeholder="Tu contraseña"
+                 oninput="validateSigninForm()" required />
+          <span class="field-error">Mínimo 6 caracteres</span>
+        </div>
+
+        <div class="modal-auth-actions">
+          <button type="submit" class="btn-modal-primary" id="btn-do-signin" disabled>
+            Iniciar sesión
+          </button>
+        </div>
+      </form>
+
+      <div class="modal-auth-extras">
+        <button class="login-link" type="button" onclick="openForgotPasswordModal()">
+          ¿Olvidaste tu contraseña?
+        </button>
+        <span class="modal-auth-divider">·</span>
+        <button class="login-link" type="button" onclick="openEmailSignupModal()">
+          Crear cuenta
+        </button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════════════════════
+       MODAL: Crear cuenta con email
+       ══════════════════════════════════════════════════════════ -->
+  <div class="modal-overlay hidden" id="modal-email-signup">
+    <div class="modal modal-auth">
+      <div class="modal-header">
+        <h3 class="modal-title">⊕ Crear cuenta</h3>
+        <button class="modal-close" type="button" onclick="closeEmailSignupModal()" aria-label="Cerrar">✕</button>
+      </div>
+
+      <p class="modal-desc" style="text-align:left;margin-bottom:14px">
+        Crea una cuenta para guardar tus planes en la nube y acceder desde cualquier dispositivo.
+      </p>
+
+      <form onsubmit="doEmailSignup(); return false;">
+        <div class="field" id="field-signup-email">
+          <label for="inp-signup-email">Correo electrónico</label>
+          <input type="email" id="inp-signup-email" autocomplete="email"
+                 placeholder="tu@correo.com"
+                 oninput="validateSignupForm()" required />
+          <span class="field-error">Correo inválido</span>
+        </div>
+
+        <div class="field" id="field-signup-password">
+          <label for="inp-signup-password">Contraseña</label>
+          <input type="password" id="inp-signup-password" autocomplete="new-password"
+                 placeholder="Mínimo 8 caracteres"
+                 oninput="validateSignupForm()" required />
+          <span class="field-hint">Mínimo 8 caracteres</span>
+          <span class="field-error">Mínimo 8 caracteres</span>
+        </div>
+
+        <div class="field" id="field-signup-password-confirm">
+          <label for="inp-signup-password-confirm">Confirmar contraseña</label>
+          <input type="password" id="inp-signup-password-confirm" autocomplete="new-password"
+                 placeholder="Repite la contraseña"
+                 oninput="validateSignupForm()" required />
+          <span class="field-error">Las contraseñas no coinciden</span>
+        </div>
+
+        <p class="modal-auth-note">
+          Al crear cuenta te enviaremos un correo para verificar tu dirección. Esto es importante
+          para poder recuperar tu contraseña en el futuro.
+        </p>
+
+        <div class="modal-auth-actions">
+          <button type="submit" class="btn-modal-primary" id="btn-do-signup" disabled>
+            Crear cuenta
+          </button>
+        </div>
+      </form>
+
+      <div class="modal-auth-extras">
+        <span class="modal-auth-extra-text">¿Ya tienes cuenta?</span>
+        <button class="login-link" type="button" onclick="openEmailSigninModal()">
+          Iniciar sesión
+        </button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════════════════════
+       MODAL: Olvidé mi contraseña
+       ══════════════════════════════════════════════════════════ -->
+  <div class="modal-overlay hidden" id="modal-forgot-password">
+    <div class="modal modal-auth">
+      <div class="modal-header">
+        <h3 class="modal-title">↻ Restablecer contraseña</h3>
+        <button class="modal-close" type="button" onclick="closeForgotPasswordModal()" aria-label="Cerrar">✕</button>
+      </div>
+
+      <p class="modal-desc" style="text-align:left;margin-bottom:14px">
+        Ingresa el correo de tu cuenta. Te enviaremos un enlace para restablecer tu contraseña.
+      </p>
+
+      <form onsubmit="doSendPasswordReset(); return false;">
+        <div class="field" id="field-forgot-email">
+          <label for="inp-forgot-email">Correo electrónico</label>
+          <input type="email" id="inp-forgot-email" autocomplete="email"
+                 placeholder="tu@correo.com"
+                 oninput="validateForgotForm()" required />
+          <span class="field-error">Correo inválido</span>
+        </div>
+
+        <div class="modal-auth-actions">
+          <button type="submit" class="btn-modal-primary" id="btn-do-forgot" disabled>
+            Enviar enlace
+          </button>
+        </div>
+      </form>
+
+      <div class="modal-auth-extras">
+        <button class="login-link" type="button" onclick="openEmailSigninModal()">
+          ← Volver a iniciar sesión
+        </button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Toast -->
+  <div class="toast hidden" id="toast" role="alert" aria-live="polite"></div>
+
+
+  <!-- Firebase (módulo ES6) — debe cargar antes que login.js -->
+  <script type="module" src="firebase-cloud.js"></script>
+  <script src="login.js"></script>
+</body>
+</html>
