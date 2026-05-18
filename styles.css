@@ -2017,6 +2017,17 @@ body.cloudless-mode .user-menu { display: none; }
   animation:       fadeIn 0.3s ease;
 }
 
+/* En login.html (página independiente), el overlay es el "fondo" de la
+   página, no un modal. Bajamos su z-index para que los modales auth
+   (z-index 1000) aparezcan ENCIMA. Sin esta regla los modales se abrían
+   pero quedaban tapados por el login-overlay. */
+.login-body .login-overlay {
+  z-index: 1;
+}
+.login-body .modal-overlay {
+  z-index: 1000;
+}
+
 .login-card {
   background:    var(--bg-panel);
   border:        1px solid var(--border);
