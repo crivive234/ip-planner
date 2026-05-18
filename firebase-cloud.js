@@ -204,10 +204,15 @@ const NetPlanCloud = {
    * Inicia sesión con Google.
    * Un solo popup. Si el popup es bloqueado o cerrado, lanza el error
    * correspondiente para que la UI lo maneje.
+   *
+   * v4.7.1: Fuerza el selector de cuentas Google con prompt='select_account'.
+   * Sin esto, Google reusaba automáticamente la última cuenta utilizada en
+   * el navegador, sin dar opción de elegir otra después de un signOut.
    */
   async signInWithGoogle() {
     if (!_auth) throw new Error('Cloud no disponible');
     const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
     const result = await signInWithPopup(_auth, provider);
     return result.user;
   },
