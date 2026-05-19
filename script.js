@@ -2326,86 +2326,271 @@ function renderConnectionsTable() {
 }
 
 
+/* ══════════════════════════════════════════════════════════════
+   GENERADOR DRAWIO XML — v4.7 Bloque C parte 1
+   Iconos de equipos de red + etiquetas de interfaces
+   ══════════════════════════════════════════════════════════════
+
+   Cambios respecto a versión anterior:
+   - Cajas rectangulares → stencils profesionales de drawio:
+     · Internet/WAN → shape=mxgraph.networking.cloud
+     · Firewall    → shape=mxgraph.cisco19.firewall
+     · Core L3     → shape=mxgraph.cisco19.l3_switch
+     · SW-ACC L2   → shape=mxgraph.cisco19.l2_switch
+     · APs WiFi    → shape=mxgraph.cisco19.wireless_access_point
+   - Etiquetas de interfaces en los extremos de cada enlace
+     (sourceLabel/targetLabel mediante mxCells hijos con
+     geometry.x relativa: -0.7 = origen, +0.7 = destino)
+   - Para enlaces LACP: etiqueta de Port-Channel en el centro
+   - VLAN-chips bajo cada switch se mantienen
+   - Se agrega capa de APs WiFi si hay VLAN type='wifi' en el plan
+   ══════════════════════════════════════════════════════════════ */
 
 function generateDrawioXML() {
   if (!S.vlans.length) return '';
 
   const dual = S.redundancia === 'dual';
-  const esc  = s => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const esc  = s => String(s ?? '').replace(/[&<>"']/g,
+    m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const isCisco = S.vendor === 'cisco';
 
+  /* Sintaxis corta de interfaces según vendor */
+  const ifShort     = (port) => isCisco ? `Gi0/${port}`   : `GE0/0/${port}`;
+  const ifCoreShort = (port) => isCisco ? `Gi1/0/${port}` : `GE0/0/${port}`;
+
+  /* ── Estilos basados en stencils profesionales ─────────────── */
   const STYLES = {
-    inet:  'rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#f59e0b;fontColor=#92400e;fontSize=11;',
-    fw:    'rounded=1;whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#dc2626;fontColor=#7f1d1d;fontSize=11;',
-    core:  'rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f0fb;strokeColor=#1a6fc4;strokeWidth=2;fontColor=#0f4d8f;fontSize=12;fontStyle=1;',
-    swCore:'rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f0fb;strokeColor=#1a6fc4;fontColor=#1a6fc4;fontSize=11;fontStyle=1;',
-    swAcc: 'rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#94a3b8;fontColor=#1a2332;fontSize=10;',
-    vlan:  c => `rounded=1;whiteSpace=wrap;html=1;fillColor=${c}1a;strokeColor=${c};fontColor=${c};fontSize=9;`,
-    edge:  'endArrow=classic;html=1;rounded=0;strokeColor=#94a3b8;strokeWidth=1.5;',
-    edgeDual: 'endArrow=classic;html=1;rounded=0;strokeColor=#1a6fc4;strokeWidth=2;dashed=0;',
+    inet: 'sketch=0;outlineConnect=0;fontColor=#0F4D8F;gradientColor=none;' +
+          'fillColor=#FFE082;strokeColor=#F57F17;dashed=0;verticalLabelPosition=bottom;' +
+          'verticalAlign=top;align=center;html=1;shape=mxgraph.networking.cloud;',
+
+    fw:   'sketch=0;outlineConnect=0;fontColor=#7F1D1D;gradientColor=none;' +
+          'fillColor=#FECACA;strokeColor=#DC2626;dashed=0;verticalLabelPosition=bottom;' +
+          'verticalAlign=top;align=center;html=1;shape=mxgraph.cisco19.firewall;',
+
+    core: 'sketch=0;outlineConnect=0;fontColor=#0F4D8F;gradientColor=none;' +
+          'fillColor=#BBDEFB;strokeColor=#1A6FC4;strokeWidth=2;dashed=0;' +
+          'verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;' +
+          'shape=mxgraph.cisco19.l3_switch;',
+
+    swCoreFloor:
+          'sketch=0;outlineConnect=0;fontColor=#1A6FC4;gradientColor=none;' +
+          'fillColor=#BBDEFB;strokeColor=#1A6FC4;dashed=0;' +
+          'verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;' +
+          'shape=mxgraph.cisco19.l3_switch;',
+
+    swAcc:'sketch=0;outlineConnect=0;fontColor=#1a2332;gradientColor=none;' +
+          'fillColor=#F5F5F5;strokeColor=#94A3B8;dashed=0;' +
+          'verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;' +
+          'shape=mxgraph.cisco19.l2_switch;',
+
+    ap:   'sketch=0;outlineConnect=0;fontColor=#7C3AED;gradientColor=none;' +
+          'fillColor=#E9D5FF;strokeColor=#7C3AED;dashed=0;' +
+          'verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;' +
+          'shape=mxgraph.cisco19.wireless_access_point;',
+
+    vlan: c => `rounded=1;whiteSpace=wrap;html=1;fillColor=${c}1a;` +
+               `strokeColor=${c};fontColor=${c};fontSize=9;fontStyle=1;`,
+
+    edge:     'endArrow=none;html=1;rounded=0;strokeColor=#94A3B8;' +
+              'strokeWidth=1.5;edgeStyle=orthogonalEdgeStyle;',
+    edgeDual: 'endArrow=none;html=1;rounded=0;strokeColor=#1A6FC4;' +
+              'strokeWidth=2.5;edgeStyle=orthogonalEdgeStyle;',
+    edgeAP:   'endArrow=none;html=1;rounded=0;strokeColor=#A78BFA;' +
+              'strokeWidth=1;dashed=1;dashPattern=4 4;' +
+              'edgeStyle=orthogonalEdgeStyle;',
+
+    ifLabel:  'text;html=1;align=center;verticalAlign=middle;' +
+              'fontSize=9;fontFamily=Courier New;fontColor=#475569;' +
+              'labelBackgroundColor=#FFFFFF;',
+
+    poLabel:  'text;html=1;align=center;verticalAlign=middle;' +
+              'fontSize=9;fontFamily=Courier New;fontColor=#1A6FC4;' +
+              'fontStyle=1;labelBackgroundColor=#E8F0FB;',
   };
 
   const TYPE_CLR = {
-    users:'#1a6fc4', admin:'#1a7a4a', servers:'#7c3aed',
-    voip:'#0891b2', wifi:'#7c3aed', mgmt:'#875a00', custom:'#718096',
+    users:'#1A6FC4', admin:'#1A7A4A', servers:'#7C3AED',
+    voip:'#0891B2',  wifi:'#7C3AED',  mgmt:'#875A00', custom:'#718096',
   };
 
+  /* Geometría */
+  const cx     = 600;
+  const inetY  = 40;
+  const fwY    = 140;
+  const coreY  = 250;
+  const swY    = 400;
+  const vlanY  = 510;
+  const apY    = 620;
+  const colW   = 200;
+
+  const hasWifi = S.vlans.some(v => v.type === 'wifi');
+
   let cells = '';
-  let id = 100;
-  const cx = 600;
-  const inetY = 40;
-  const fwY = 130;
-  const coreY = 230;
-  const swY = 380;
-  const vlanY = 480;
-  const colW = 200;
+  let nextEdgeId = 100;
 
-  cells += `<mxCell id="inet" value="${esc('☁ INTERNET / WAN' + (S.wan_nexthop ? '\n' + S.wan_nexthop : ''))}" style="${STYLES.inet}" vertex="1" parent="1"><mxGeometry x="${cx-65}" y="${inetY}" width="130" height="50" as="geometry"/></mxCell>\n`;
-  cells += `<mxCell id="fw"   value="${esc('🛡 FW-01\n' + getFWip())}"           style="${STYLES.fw}"   vertex="1" parent="1"><mxGeometry x="${cx-85}" y="${fwY}"   width="170" height="50" as="geometry"/></mxCell>\n`;
-  cells += `<mxCell id="core" value="${esc('⚡ CORE SWITCH L3\n' + getCoreIP() + '\n' + S.vlans.length + ' SVIs')}" style="${STYLES.core}" vertex="1" parent="1"><mxGeometry x="${cx-110}" y="${coreY}" width="220" height="60" as="geometry"/></mxCell>\n`;
+  /* Helper: crear edge con etiquetas en source/target/center.
+     Drawio acepta sub-mxCells hijos con geometry.x relativa:
+       -0.7 = posicionado cerca del extremo origen
+       +0.7 = posicionado cerca del extremo destino
+        0   = centro */
+  function buildEdge(srcId, tgtId, baseStyle, opts = {}) {
+    const { srcLabel = '', tgtLabel = '', midLabel = '' } = opts;
+    const eid = `e${nextEdgeId++}`;
 
-  cells += `<mxCell id="e1" style="${STYLES.edge}" edge="1" parent="1" source="inet" target="fw"><mxGeometry relative="1" as="geometry"/></mxCell>\n`;
-  cells += `<mxCell id="e2" style="${STYLES.edge}" edge="1" parent="1" source="fw"   target="core"><mxGeometry relative="1" as="geometry"/></mxCell>\n`;
+    let xml = `<mxCell id="${eid}" style="${baseStyle}" edge="1" parent="1" ` +
+              `source="${srcId}" target="${tgtId}">` +
+              `<mxGeometry relative="1" as="geometry"/></mxCell>\n`;
 
-  const pisos     = S.pisos;
-  const totalW    = pisos * colW;
-  const startX    = cx - totalW/2 + colW/2;
+    if (srcLabel) {
+      xml += `<mxCell id="${eid}_s" value="${esc(srcLabel)}" ` +
+             `style="${STYLES.ifLabel}" vertex="1" connectable="0" parent="${eid}">` +
+             `<mxGeometry x="-0.7" relative="1" as="geometry">` +
+             `<mxPoint as="offset"/></mxGeometry></mxCell>\n`;
+    }
+    if (tgtLabel) {
+      xml += `<mxCell id="${eid}_t" value="${esc(tgtLabel)}" ` +
+             `style="${STYLES.ifLabel}" vertex="1" connectable="0" parent="${eid}">` +
+             `<mxGeometry x="0.7" relative="1" as="geometry">` +
+             `<mxPoint as="offset"/></mxGeometry></mxCell>\n`;
+    }
+    if (midLabel) {
+      xml += `<mxCell id="${eid}_m" value="${esc(midLabel)}" ` +
+             `style="${STYLES.poLabel}" vertex="1" connectable="0" parent="${eid}">` +
+             `<mxGeometry x="0" relative="1" as="geometry">` +
+             `<mxPoint as="offset"/></mxGeometry></mxCell>\n`;
+    }
+
+    return xml;
+  }
+
+  /* 1. Internet/WAN */
+  const internetLabel = 'INTERNET / WAN' +
+    (S.wan_nexthop ? `\nNext-hop: ${S.wan_nexthop}` : '');
+  cells += `<mxCell id="inet" value="${esc(internetLabel)}" style="${STYLES.inet}" ` +
+           `vertex="1" parent="1">` +
+           `<mxGeometry x="${cx-50}" y="${inetY}" width="100" height="60" as="geometry"/>` +
+           `</mxCell>\n`;
+
+  /* 2. Firewall */
+  const fwLabel = `FW-01\n${getFWip()}`;
+  cells += `<mxCell id="fw" value="${esc(fwLabel)}" style="${STYLES.fw}" ` +
+           `vertex="1" parent="1">` +
+           `<mxGeometry x="${cx-50}" y="${fwY}" width="100" height="70" as="geometry"/>` +
+           `</mxCell>\n`;
+
+  /* 3. Edge Internet ↔ FW */
+  cells += buildEdge('inet', 'fw', STYLES.edge, {
+    srcLabel: 'WAN',
+    tgtLabel: 'GE0/0',
+  });
+
+  /* 4. Core Switch L3 */
+  const coreLabel = `CORE-SW-01\n${getCoreIP()}\n${S.vlans.length} SVIs · L3`;
+  cells += `<mxCell id="core" value="${esc(coreLabel)}" style="${STYLES.core}" ` +
+           `vertex="1" parent="1">` +
+           `<mxGeometry x="${cx-60}" y="${coreY}" width="120" height="90" as="geometry"/>` +
+           `</mxCell>\n`;
+
+  /* 5. Edge FW ↔ Core */
+  if (dual) {
+    cells += buildEdge('fw', 'core', STYLES.edgeDual, {
+      srcLabel: 'GE0/1+GE0/2',
+      tgtLabel: `${ifCoreShort(47)}+${ifCoreShort(48)}`,
+      midLabel: 'LACP Po1',
+    });
+  } else {
+    cells += buildEdge('fw', 'core', STYLES.edge, {
+      srcLabel: 'GE0/1',
+      tgtLabel: ifCoreShort(48),
+    });
+  }
+
+  /* 6. Switches por piso */
+  const pisos    = S.pisos;
+  const totalW   = pisos * colW;
+  const startX   = cx - totalW / 2 + colW / 2;
 
   const floorVlans = (fl) => S.vlans.filter(v =>
     v.floor === 'all' || (v.floor === 'core' && fl === S.core_piso)
   );
 
+  const accFloors = [];
+  for (let f = 1; f <= pisos; f++) {
+    if (f !== S.core_piso) accFloors.push(f);
+  }
+
   for (let fl = 1; fl <= pisos; fl++) {
     const sx     = startX + (fl - 1) * colW;
     const isCore = fl === S.core_piso;
     const swId   = `sw${fl}`;
-    const lbl    = isCore
-      ? `🟦 SW-CORE (P${fl})\nCore L3 + Access`
-      : `SW-ACC P${fl}\nL2 Access`;
-    const style = isCore ? STYLES.swCore : STYLES.swAcc;
 
-    cells += `<mxCell id="${swId}" value="${esc(lbl)}" style="${style}" vertex="1" parent="1"><mxGeometry x="${sx-70}" y="${swY}" width="140" height="50" as="geometry"/></mxCell>\n`;
+    if (isCore) {
+      cells += `<mxCell id="${swId}" value="${esc('Piso ' + fl + ' (CPD)\nCore L3 + Acceso')}" ` +
+               `style="${STYLES.swCoreFloor}" vertex="1" parent="1">` +
+               `<mxGeometry x="${sx-50}" y="${swY}" width="100" height="80" as="geometry"/>` +
+               `</mxCell>\n`;
+      cells += `<mxCell id="e_core_${fl}" style="${STYLES.edge};dashed=1;" ` +
+               `edge="1" parent="1" source="core" target="${swId}">` +
+               `<mxGeometry relative="1" as="geometry"/></mxCell>\n`;
+    } else {
+      const lbl = `SW-ACC-P${fl}\nL2 · Piso ${fl}`;
+      cells += `<mxCell id="${swId}" value="${esc(lbl)}" style="${STYLES.swAcc}" ` +
+               `vertex="1" parent="1">` +
+               `<mxGeometry x="${sx-50}" y="${swY}" width="100" height="80" as="geometry"/>` +
+               `</mxCell>\n`;
 
-    if (!isCore) {
-      const edgeStyle = dual ? STYLES.edgeDual : STYLES.edge;
-      const lblEdge   = dual ? 'LACP/Po1' : '';
-      cells += `<mxCell id="ec${fl}" value="${esc(lblEdge)}" style="${edgeStyle}" edge="1" parent="1" source="core" target="${swId}"><mxGeometry relative="1" as="geometry"/></mxCell>\n`;
+      const idx = accFloors.indexOf(fl);
+      if (dual) {
+        const corePort1 = idx * 2 + 1;
+        const corePort2 = idx * 2 + 2;
+        const poN       = idx + 2;
+        cells += buildEdge('core', swId, STYLES.edgeDual, {
+          srcLabel: `${ifCoreShort(corePort1)}+${ifCoreShort(corePort2)}`,
+          tgtLabel: `${ifShort(S.puertos-1)}+${ifShort(S.puertos)}`,
+          midLabel: `LACP Po${poN}`,
+        });
+      } else {
+        const corePort = idx + 1;
+        cells += buildEdge('core', swId, STYLES.edge, {
+          srcLabel: ifCoreShort(corePort),
+          tgtLabel: ifShort(S.puertos),
+        });
+      }
     }
 
+    /* VLAN-chips */
     const vstk = floorVlans(fl);
     vstk.forEach((v, vi) => {
-      const vx = sx - 70 + (vi % 3) * 50;
-      const vy = vlanY + Math.floor(vi / 3) * 32;
+      const vx  = sx - 60 + (vi % 3) * 45;
+      const vy  = vlanY + Math.floor(vi / 3) * 26;
       const vId = `v${v.id}_p${fl}`;
       const clr = TYPE_CLR[v.type] || '#718096';
-      cells += `<mxCell id="${vId}" value="${esc('VLAN ' + v.id + '\n' + v.name)}" style="${STYLES.vlan(clr)}" vertex="1" parent="1"><mxGeometry x="${vx}" y="${vy}" width="46" height="28" as="geometry"/></mxCell>\n`;
-      cells += `<mxCell id="ev${id++}" style="${STYLES.edge};dashed=1;" edge="1" parent="1" source="${swId}" target="${vId}"><mxGeometry relative="1" as="geometry"/></mxCell>\n`;
+      cells += `<mxCell id="${vId}" value="${esc('V' + v.id)}" ` +
+               `style="${STYLES.vlan(clr)}" vertex="1" parent="1">` +
+               `<mxGeometry x="${vx}" y="${vy}" width="40" height="22" as="geometry"/>` +
+               `</mxCell>\n`;
     });
+
+    /* AP WiFi */
+    if (hasWifi) {
+      const apId = `ap${fl}`;
+      const apsPerFloor = Math.ceil(S.hosts_piso / 30);
+      cells += `<mxCell id="${apId}" ` +
+               `value="${esc('AP WiFi\n×' + apsPerFloor + ' Piso ' + fl)}" ` +
+               `style="${STYLES.ap}" vertex="1" parent="1">` +
+               `<mxGeometry x="${sx-35}" y="${apY}" width="70" height="55" as="geometry"/>` +
+               `</mxCell>\n`;
+      cells += `<mxCell id="e_ap_${fl}" style="${STYLES.edgeAP}" ` +
+               `edge="1" parent="1" source="${swId}" target="${apId}">` +
+               `<mxGeometry relative="1" as="geometry"/></mxCell>\n`;
+    }
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<mxfile host="app.diagrams.net" modified="${new Date().toISOString()}" agent="NetPlan Pro v4.6" version="22.0.0">
+<mxfile host="app.diagrams.net" modified="${new Date().toISOString()}" agent="NetPlan Pro v4.7" version="22.0.0">
   <diagram name="Topología — ${esc(S.domain)}" id="netplan">
-    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="900" math="0" shadow="0">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="1000" math="0" shadow="0">
       <root>
         <mxCell id="0"/>
         <mxCell id="1" parent="0"/>
@@ -2414,6 +2599,11 @@ ${cells}      </root>
   </diagram>
 </mxfile>`;
 }
+
+
+
+
+
 
 
 /* ══════════════════════════════════════════════════════════════
